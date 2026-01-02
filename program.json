@@ -1,0 +1,9 @@
+{
+  "program": "priv_mess_v4_1231.aleo",
+  "version": "0.1.0",
+  "description": "Private Messenger for Aleo Mainnet",
+  "license": "MIT",
+  "leo": "3.4.0",
+  "dependencies": null,
+  "dev_dependencies": null
+}
