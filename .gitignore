@@ -3,3 +3,7 @@
 *.prover
 *.verifier
 outputs/
+node_modules/
+build/
+deploy_output/
+.DS_Store

@@ -1,5 +1,6 @@
 import { useMemo, useState, useEffect, useRef, useCallback } from "react";
 import type { FC } from "react";
+import { Header } from "./Header";
 import { WalletProvider } from "@demox-labs/aleo-wallet-adapter-react";
 import { LeoWalletAdapter } from "@demox-labs/aleo-wallet-adapter-leo";
 import { PuzzleWalletAdapter } from "aleo-adapters";
@@ -9,11 +10,14 @@ import {
     Transaction,
 } from "@demox-labs/aleo-wallet-adapter-base";
 import { useWallet } from "@demox-labs/aleo-wallet-adapter-react";
-import { AleoNetworkClient, ViewKey, RecordCiphertext, RecordPlaintext } from "@provablehq/sdk";
+import { PROGRAM_ID } from "./deployed_program";
+import { useWalletRecords } from "./hooks/useWalletRecords";
+import { TxCache } from "./utils/txCache";
+import { PermissionAlert } from "./components/PermissionAlert";
 import "./App.css";
 
-// Program ID
-const PROGRAM_ID = "priv_mess_v4_1231.aleo";
+// Program ID - v5 with message indexing
+// const PROGRAM_ID = "priv_mess_v5.aleo";
 
 
 
@@ -145,13 +149,11 @@ export const WalletConnectButton: FC<NetworkProps> = ({ network }) => {
 };
 
 const MessengerUI: FC<NetworkProps> = ({ network }) => {
-    const { wallet, publicKey, transactionStatus, requestRecords } = useWallet();
+    const { wallet, publicKey, transactionStatus, requestRecords, connect, disconnect } = useWallet();
     const adapter = wallet?.adapter as unknown as WalletAdapterExtras | undefined;
+    const { fetchRecords, hasPermission } = useWalletRecords();
     const [status, setStatus] = useState("Idle");
     const [recipient, setRecipient] = useState("");
-    const [viewKey, setViewKey] = useState(""); // For advanced sync
-    const [viewKeyInput, setViewKeyInput] = useState(""); // Input state for view key
-    const [showAdvanced, setShowAdvanced] = useState(false);
     const [message, setMessage] = useState("");
     const [profileName, setProfileName] = useState("");
     const [profileBio, setProfileBio] = useState("");
@@ -161,9 +163,9 @@ const MessengerUI: FC<NetworkProps> = ({ network }) => {
     const [profiles] = useState<Map<string, Profile>>(() => new Map());
     const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
     const [importTxId, setImportTxId] = useState("");
+    const [scanProgress, setScanProgress] = useState(0);
     const retryMap = useRef<{ [key: string]: number }>({});
     const isSyncingRef = useRef(false);
-    const lastChainScanAtRef = useRef(0);
 
 
 
@@ -242,10 +244,6 @@ const MessengerUI: FC<NetworkProps> = ({ network }) => {
         }
     }, [sentHistory, transactionStatus, publicKey, adapter]);
 
-    useEffect(() => {
-        localStorage.setItem("sentHistory", JSON.stringify(sentHistory));
-    }, [sentHistory]);
-
     const addToHistory = (txId: string, type: string, recipient?: string) => {
         const newItem: SentHistoryItem = { txId, type, timestamp: Date.now(), status: "Pending", recipient };
         setSentHistory(prev => [newItem, ...prev]);
@@ -255,12 +253,9 @@ const MessengerUI: FC<NetworkProps> = ({ network }) => {
     const [messages, setMessages] = useState<InboxMessage[]>([]);
     const [isSyncing, setIsSyncing] = useState(false);
 
-    // --- Effects (Moved here to avoid ReferenceError) ---
-
     // Load/Save Sent History and Inbox Messages based on PublicKey
     useEffect(() => {
         if (!publicKey) {
-            // Clear state on disconnect
             setSentHistory([]);
             setMessages([]);
             return;
@@ -274,24 +269,35 @@ const MessengerUI: FC<NetworkProps> = ({ network }) => {
             } catch {
                 console.warn("Failed to parse saved history");
             }
-        } else {
-            setSentHistory([]);
         }
 
-        // Load Inbox Messages
+        // Load Inbox Messages from localStorage ONLY as initial cache
+        // Real data comes from blockchain via sync
+        // Note: localStorage is just a cache - blockchain is the source of truth
         const savedMessages = localStorage.getItem(`inboxMessages_${publicKey}`);
         if (savedMessages) {
             try {
                 const parsed = JSON.parse(savedMessages);
-                setMessages(parsed);
+                console.log(`📂 Loaded ${parsed.length} cached messages from localStorage`);
+                console.log(`ℹ️  Note: These are cached. Click SYNC to get fresh data from blockchain.`);
+                // Only set if messages state is empty (initial load only)
+                setMessages(prev => {
+                    if (prev.length === 0) {
+                        console.log(`📂 Setting initial messages from cache: ${parsed.length}`);
+                        return parsed;
+                    } else {
+                        console.log(`📂 Skipping cache load - messages already in state: ${prev.length}`);
+                        return prev;
+                    }
+                });
             } catch {
                 console.warn("Failed to parse saved messages");
             }
         } else {
-            setMessages([]);
+            console.log(`📂 No cached messages in localStorage`);
+            console.log(`ℹ️  Click SYNC to load messages from blockchain.`);
         }
 
-        // Fetch profiles on load
         fetchProfiles();
     }, [publicKey]);
 
@@ -302,33 +308,17 @@ const MessengerUI: FC<NetworkProps> = ({ network }) => {
         }
     }, [sentHistory, publicKey]);
 
-    // Save Inbox Messages whenever they change
+    // Save Inbox Messages to localStorage ONLY as cache after successful sync
+    // This is just for performance - blockchain is the source of truth
+    // IMPORTANT: Only save AFTER sync completes, not during sync
     useEffect(() => {
-        if (publicKey && messages.length > 0) {
+        if (publicKey && messages.length > 0 && !isSyncing) {
+            // Only save if we have messages AND sync is not in progress
+            // This prevents overwriting new messages with old cached data
+            console.log(`💾 Caching ${messages.length} messages to localStorage (blockchain is source of truth)`);
             localStorage.setItem(`inboxMessages_${publicKey}`, JSON.stringify(messages));
         }
-    }, [messages, publicKey]);
-
-
-    useEffect(() => {
-        if (publicKey) {
-            const savedMessages = localStorage.getItem(`inbox_${publicKey}`);
-            if (savedMessages) {
-                try {
-                    const parsed = JSON.parse(savedMessages) as InboxMessage[];
-                    setMessages(parsed);
-                } catch {
-                    void 0;
-                }
-            }
-        }
-    }, [publicKey]);
-
-    useEffect(() => {
-        if (publicKey && messages.length > 0) {
-            localStorage.setItem(`inbox_${publicKey}`, JSON.stringify(messages));
-        }
-    }, [messages, publicKey]);
+    }, [messages, publicKey, isSyncing]);
 
 
     useEffect(() => {
@@ -562,46 +552,7 @@ const MessengerUI: FC<NetworkProps> = ({ network }) => {
         let sender: string | undefined;
         let recipient: string | undefined;
 
-        // 1. Try View Key (Priority)
-        if (viewKey && viewKey.startsWith("AViewKey1")) {
-            try {
-                const vk = ViewKey.from_string(viewKey);
-                let decryptedStr: string | null = null;
-                let isEncryptedRecord = cleanCiphertext.startsWith("record1");
-
-                if (isEncryptedRecord) {
-                    try {
-                        const rc = RecordCiphertext.fromString(cleanCiphertext);
-                        if (rc.isOwner(vk)) {
-                            decryptedStr = rc.decrypt(vk).toString();
-                        }
-                    } catch (e) { 
-                        // console.warn("RecordCiphertext decrypt failed:", e);
-                    }
-                }
-
-                if (!decryptedStr) {
-                    try {
-                         // @ts-ignore
-                         const direct = vk.decrypt(cleanCiphertext);
-                         if (direct) decryptedStr = direct.toString();
-                    } catch (e) { }
-                }
-
-                if (!decryptedStr && !isEncryptedRecord) {
-                    try {
-                         const rp = RecordPlaintext.fromString(cleanCiphertext);
-                         decryptedStr = rp.toString();
-                    } catch (e) { }
-                }
-
-                if (decryptedStr) {
-                    fullPlaintext = decryptedStr;
-                }
-            } catch (e) { console.warn("ViewKey decrypt error", e); }
-        }
-
-        // 2. Try Wallet Adapter
+        // Try Wallet Adapter
         if (!fullPlaintext && adapter?.decrypt) {
              const normalizeTpk = (tpk: string | undefined) => {
                 if (!tpk) return [];
@@ -682,13 +633,6 @@ const MessengerUI: FC<NetworkProps> = ({ network }) => {
         return null;
     };
 
-    const decryptCiphertextToText = async (
-        ciphertext: string,
-        ctx: { tpk?: string; programId: string; functionName: string; indexes: number[] }
-    ): Promise<string | null> => {
-        const res = await decryptRecord(ciphertext, ctx);
-        return res ? res.content : null;
-    };
 
     const getProvableApiBase = (net: WalletAdapterNetwork) => {
         const origin =
@@ -702,67 +646,73 @@ const MessengerUI: FC<NetworkProps> = ({ network }) => {
         try {
             console.log(`Fetching records from wallet API (force=${forceRefresh})...`);
             
-            // Leo Wallet specific: requestRecordPlaintexts sometimes fails with INVALID_PARAMS 
-            // if OnChainHistory is not enabled or for other reasons.
-            // We'll wrap it and fallback if needed.
-
-            if (adapter?.requestRecordPlaintexts) {
-                try {
-                     const records = await adapter.requestRecordPlaintexts(PROGRAM_ID);
-                     console.log(`✅ Fetched ${records?.length || 0} records from wallet`);
-                     return records || [];
-                } catch (e: any) {
-                    console.warn("adapter.requestRecordPlaintexts failed:", e);
-                    // If it's INVALID_PARAMS, we might want to skip to other methods or return empty to trigger fallback
-                }
-            }
-
+            // Try requestRecords first (more reliable than requestRecordPlaintexts)
             const rr = requestRecords || adapter?.requestRecords;
             if (rr) {
-                // ... existing requestRecords logic ...
-                const records = await rr(PROGRAM_ID);
-                console.log(`✅ Fetched ${records?.length || 0} records from wallet`);
+                try {
+                    const records = await rr(PROGRAM_ID);
+                    console.log(`✅ Fetched ${records?.length || 0} records from wallet via requestRecords`);
 
-                if (records && records.length > 0 && adapter?.decrypt) {
-                    const decryptedRecords: Array<{ id?: string; plaintext: string }> = [];
-                    for (const record of records) {
-                        try {
-                            if (typeof record === "string") {
-                                if (record.startsWith("record1")) {
-                                    const decrypted = await adapter.decrypt(record);
-                                    if (typeof decrypted === "string") {
-                                        decryptedRecords.push({ plaintext: decrypted });
+                    if (records && records.length > 0 && adapter?.decrypt) {
+                        const decryptedRecords: Array<{ id?: string; plaintext: string }> = [];
+                        for (const record of records) {
+                            try {
+                                if (typeof record === "string") {
+                                    if (record.startsWith("record1")) {
+                                        const decrypted = await adapter.decrypt(record);
+                                        if (typeof decrypted === "string") {
+                                            decryptedRecords.push({ plaintext: decrypted });
+                                        } else {
+                                            decryptedRecords.push({ plaintext: JSON.stringify(decrypted) });
+                                        }
                                     } else {
-                                        decryptedRecords.push({ plaintext: JSON.stringify(decrypted) });
+                                        decryptedRecords.push({ plaintext: record });
                                     }
-                                } else {
-                                    decryptedRecords.push({ plaintext: record });
+                                } else if (record && typeof record === "object") {
+                                    const obj = record as Record<string, unknown>;
+                                    const ciphertext =
+                                        (typeof obj.ciphertext === "string" && obj.ciphertext) ||
+                                        (typeof obj.record === "string" && obj.record) ||
+                                        "";
+                                    if (ciphertext && ciphertext.startsWith("record1")) {
+                                        const decrypted = await adapter.decrypt(ciphertext);
+                                        decryptedRecords.push({
+                                            id: typeof obj.id === "string" ? obj.id : undefined,
+                                            plaintext: typeof decrypted === "string" ? decrypted : JSON.stringify(decrypted),
+                                        });
+                                    }
                                 }
-                            } else if (record && typeof record === "object") {
-                                const obj = record as Record<string, unknown>;
-                                const ciphertext =
-                                    (typeof obj.ciphertext === "string" && obj.ciphertext) ||
-                                    (typeof obj.record === "string" && obj.record) ||
-                                    "";
-                                if (ciphertext && ciphertext.startsWith("record1")) {
-                                    const decrypted = await adapter.decrypt(ciphertext);
-                                    decryptedRecords.push({
-                                        id: typeof obj.id === "string" ? obj.id : undefined,
-                                        plaintext: typeof decrypted === "string" ? decrypted : JSON.stringify(decrypted),
-                                    });
-                                }
+                            } catch (decryptErr) {
+                                console.warn("Failed to decrypt record:", decryptErr);
                             }
-                        } catch (decryptErr) {
-                            console.warn("Failed to decrypt record:", decryptErr);
                         }
+                        return decryptedRecords;
                     }
-                    return decryptedRecords;
-                }
 
-                return records || [];
+                    return records || [];
+                } catch (e: any) {
+                    console.warn("requestRecords failed:", e);
+                }
             }
 
-            console.warn("Wallet record requests are not available");
+            // Fallback: Try requestRecordPlaintexts (may fail with INVALID_PARAMS)
+            // This is less reliable but sometimes works when requestRecords doesn't
+            if (adapter?.requestRecordPlaintexts) {
+                try {
+                    const records = await adapter.requestRecordPlaintexts(PROGRAM_ID);
+                    console.log(`✅ Fetched ${records?.length || 0} records from wallet via requestRecordPlaintexts`);
+                    return records || [];
+                } catch (e: any) {
+                    // INVALID_PARAMS is expected in some cases - just log and continue
+                    if (e?.message?.includes("INVALID_PARAMS")) {
+                        console.log("⚠️  requestRecordPlaintexts returned INVALID_PARAMS (this is normal if OnChainHistory is not enabled)");
+                    } else {
+                        console.warn("requestRecordPlaintexts failed:", e);
+                    }
+                }
+            }
+
+            console.log("📭 No records available from wallet (this is normal if no messages received yet)");
             return [];
         } catch (e: unknown) {
             console.error("Wallet API fetch failed:", e);
@@ -770,40 +720,16 @@ const MessengerUI: FC<NetworkProps> = ({ network }) => {
         }
     };
 
-    const fetchTransactionIdsFromWallet = async (): Promise<string[]> => {
-        if (!adapter?.requestTransactionHistory) return [];
-        try {
-            const txs = await adapter.requestTransactionHistory(PROGRAM_ID);
-            const ids: string[] = [];
-            for (const t of txs || []) {
-                if (typeof t === "string") {
-                    if (/^at[0-9a-z]+$/i.test(t)) ids.push(t);
-                } else if (t && typeof t === "object") {
-                    const obj = t as Record<string, unknown>;
-                    const id =
-                        (typeof obj.id === "string" && obj.id) ||
-                        (typeof obj.transactionId === "string" && obj.transactionId) ||
-                        (typeof obj.transaction_id === "string" && obj.transaction_id) ||
-                        "";
-                    if (id && /^at[0-9a-z]+$/i.test(id)) ids.push(id);
-                }
-            }
-            return ids;
-        } catch (e: unknown) {
-            const msg = getErrorMessage(e);
-            if (msg.includes("Method not implemented") || msg.includes("INVALID_PARAMS")) {
-                 // Ignore this error as some adapters don't support history or params issue
-                 console.log("⚠️ Wallet transaction history not available (Method not implemented or Invalid Params). Using block scan fallback.");
-                 return [];
-            }
-            console.warn("Failed to fetch tx history from wallet:", e);
-            return [];
-        }
-    };
 
     const fetchProvableTransaction = async (txId: string): Promise<unknown | null> => {
         const base = getProvableApiBase(network);
-        const url = `${base}/transaction/${txId}`;
+        
+        // Support both transaction ID (at1...) and transition ID (au1...)
+        const isTransition = txId.startsWith("au1");
+        const endpoint = isTransition ? "transition" : "transaction";
+        const url = `${base}/${endpoint}/${txId}`;
+
+        console.log(`🔍 Fetching ${isTransition ? "transition" : "transaction"} from ${url}`);
 
         const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
         for (let attempt = 0; attempt < 6; attempt++) {
@@ -813,9 +739,39 @@ const MessengerUI: FC<NetworkProps> = ({ network }) => {
                     await delay(800 + attempt * 1000);
                     continue;
                 }
-                if (!res.ok) return null;
-                return (await res.json()) as unknown;
-            } catch {
+                if (!res.ok) {
+                    console.warn(`❌ Failed to fetch ${isTransition ? "transition" : "transaction"}: ${res.status} ${res.statusText}`);
+                    return null;
+                }
+                const data = await res.json() as unknown;
+                
+                console.log(`✅ Fetched ${isTransition ? "transition" : "transaction"} data:`, data);
+                
+                // If it's a transition, wrap it in a transaction-like structure
+                if (isTransition && data && typeof data === "object") {
+                    const transitionData = data as Record<string, unknown>;
+                    console.log(`📦 Transition data structure:`, {
+                        program: transitionData.program,
+                        function: transitionData.function,
+                        id: transitionData.id,
+                        inputs: transitionData.inputs,
+                        outputs: transitionData.outputs
+                    });
+                    
+                    // Return transition wrapped in execution.transitions format
+                    const wrapped = {
+                        execution: {
+                            transitions: [transitionData]
+                        },
+                        id: transitionData.transactionId || transitionData.id || txId
+                    };
+                    console.log(`📦 Wrapped transition structure:`, wrapped);
+                    return wrapped;
+                }
+                
+                return data;
+            } catch (error) {
+                console.error(`❌ Error fetching ${isTransition ? "transition" : "transaction"}:`, error);
                 await delay(800 + attempt * 1000);
             }
         }
@@ -825,48 +781,114 @@ const MessengerUI: FC<NetworkProps> = ({ network }) => {
     const addMessagesFromTxId = async (txId: string, target: Map<string, InboxMessage>): Promise<"added" | "not_found" | "no_access"> => {
         if (!publicKey) return "no_access";
 
+        console.log(`🔍 Processing ${txId.startsWith("au1") ? "transition" : "transaction"} ${txId}...`);
+        
         const tx = await fetchProvableTransaction(txId);
-        if (!tx || typeof tx !== "object") return "not_found";
+        if (!tx || typeof tx !== "object") {
+            console.warn(`❌ Failed to fetch ${txId.startsWith("au1") ? "transition" : "transaction"} or invalid format`);
+            return "not_found";
+        }
 
         const txObj = tx as Record<string, unknown>;
         const execution = txObj.execution;
-        if (!execution || typeof execution !== "object") return "not_found";
+        
+        // Handle both transaction format (with execution.transitions) and direct transition format
+        let transitionsRaw: unknown[] = [];
+        
+        if (execution && typeof execution === "object") {
+            const execObj = execution as Record<string, unknown>;
+            const transitions = execObj.transitions;
+            if (Array.isArray(transitions)) {
+                transitionsRaw = transitions;
+            }
+        } else if (txId.startsWith("au1")) {
+            // If it's a transition ID and data is already a transition object, use it directly
+            transitionsRaw = [txObj];
+        }
+        
+        if (!Array.isArray(transitionsRaw) || transitionsRaw.length === 0) {
+            console.warn(`❌ No transitions found in ${txId}`);
+            return "not_found";
+        }
 
-        const transitionsRaw = (execution as Record<string, unknown>).transitions;
-        if (!Array.isArray(transitionsRaw)) return "not_found";
+        console.log(`📦 Found ${transitionsRaw.length} transition(s) in ${txId}`);
 
         let addedAny = false;
 
         for (const transition of transitionsRaw) {
             if (!transition || typeof transition !== "object") continue;
             const transitionObj = transition as Record<string, unknown>;
-            if (transitionObj.program !== PROGRAM_ID) continue;
-            if (transitionObj.function !== "send_message") continue;
+            
+            console.log(`🔍 Checking transition:`, {
+                program: transitionObj.program,
+                function: transitionObj.function,
+                id: transitionObj.id
+            });
+            
+            if (transitionObj.program !== PROGRAM_ID) {
+                console.log(`⏭️  Skipping transition - wrong program: ${transitionObj.program}`);
+                continue;
+            }
+            if (transitionObj.function !== "send_message") {
+                console.log(`⏭️  Skipping transition - wrong function: ${transitionObj.function}`);
+                continue;
+            }
+            
             const tpk = typeof transitionObj.tpk === "string" ? transitionObj.tpk : undefined;
             const transitionId = typeof transitionObj.id === "string" ? transitionObj.id : undefined;
 
             const inputsRaw = transitionObj.inputs;
             const inputs = Array.isArray(inputsRaw) ? inputsRaw : [];
+            
+            console.log(`📥 Transition inputs:`, inputs);
+            
             const recipientAddr =
                 (inputs[0] && typeof inputs[0] === "object" && (inputs[0] as Record<string, unknown>).type === "public")
                     ? String((inputs[0] as Record<string, unknown>).value || "")
                     : "";
 
-            if (!recipientAddr || recipientAddr !== publicKey) continue;
+            console.log(`👤 Recipient address: ${recipientAddr}, Current user: ${publicKey}`);
+            
+            if (!recipientAddr || recipientAddr !== publicKey) {
+                console.log(`⏭️  Skipping transition - recipient mismatch`);
+                continue;
+            }
 
             const outputsRaw = transitionObj.outputs;
             const outputs = Array.isArray(outputsRaw) ? outputsRaw : [];
 
+            console.log(`📤 Transition outputs: ${outputs.length} output(s)`);
+
             for (let idx = 0; idx < outputs.length; idx++) {
                 const output = outputs[idx];
-                if (!output || typeof output !== "object") continue;
+                if (!output || typeof output !== "object") {
+                    console.log(`⏭️  Skipping output ${idx} - not an object`);
+                    continue;
+                }
                 const outputObj = output as Record<string, unknown>;
-                if (outputObj.type !== "record") continue;
+                
+                console.log(`📦 Output ${idx}:`, {
+                    type: outputObj.type,
+                    id: outputObj.id,
+                    hasValue: !!outputObj.value
+                });
+                
+                if (outputObj.type !== "record") {
+                    console.log(`⏭️  Skipping output ${idx} - not a record (type: ${outputObj.type})`);
+                    continue;
+                }
 
                 const recordId = typeof outputObj.id === "string" ? outputObj.id : undefined;
                 const ciphertext = typeof outputObj.value === "string" ? outputObj.value : "";
-                if (!ciphertext.startsWith("record1")) continue;
+                
+                console.log(`🔐 Ciphertext for output ${idx}:`, ciphertext ? `${ciphertext.substring(0, 50)}...` : "empty");
+                
+                if (!ciphertext.startsWith("record1")) {
+                    console.log(`⏭️  Skipping output ${idx} - not a record ciphertext`);
+                    continue;
+                }
 
+                console.log(`🔓 Attempting to decrypt output ${idx}...`);
                 let decrypted: DecryptedRecord | null = null;
                 try {
                      decrypted = await decryptRecord(ciphertext, {
@@ -875,33 +897,72 @@ const MessengerUI: FC<NetworkProps> = ({ network }) => {
                         functionName: "send_message",
                         indexes: [idx]
                      });
-                } catch (e) { console.warn("Decrypt in addMessagesFromTxId failed", e); }
+                     console.log(`✅ Decryption result for output ${idx}:`, decrypted ? {
+                         hasContent: !!decrypted.content,
+                         sender: decrypted.sender,
+                         recipient: decrypted.recipient
+                     } : "null");
+                } catch (e) { 
+                    console.warn(`❌ Decrypt in addMessagesFromTxId failed for output ${idx}:`, e); 
+                }
 
                 const id = recordId || `${txId}:${transitionId || "transition"}:${idx}`;
                 
-                let messageType = "received";
-                if (decrypted) {
-                     if (decrypted.sender === publicKey) messageType = "sent";
-                     // if (decrypted.recipient === publicKey) messageType = "received"; 
+                // CRITICAL: Only add messages where current user is the RECIPIENT
+                // This is the main function - check for new received SMS
+                if (!decrypted) {
+                    console.log(`⏭️  Skipping output ${idx} - decryption failed`);
+                    // Can't verify recipient without decryption, skip
+                    continue;
                 }
 
-                target.set(id, {
-                    id,
+                // Verify this is a received message (recipient === publicKey)
+                console.log(`🔍 Verifying recipient: decrypted.recipient=${decrypted.recipient}, publicKey=${publicKey}`);
+                if (decrypted.recipient !== publicKey) {
+                    console.log(`⏭️  Skipping output ${idx} - recipient mismatch in decrypted data`);
+                    // Not a received message, skip
+                    continue;
+                }
+
+                // This is a received message
+                console.log(`✅ Found received message in output ${idx}! Adding to inbox...`);
+                const messageType = "received";
+                const sender = decrypted.sender || "Unknown";
+                const content = decrypted.content || "";
+
+                // Ensure all required fields are set
+                const message: InboxMessage = {
+                    id: id,
                     type: messageType,
-                    content: decrypted ? decrypted.content : ciphertext,
-                    cipherText: ciphertext,
-                    isDecrypted: !!decrypted,
-                    sender: decrypted?.sender || "Unknown",
+                    content: content,
+                    decryptedContent: content,
+                    originalContent: decrypted.fullPlaintext || "",
+                    sender: sender,
                     timestamp: Date.now(),
-                    status: decrypted ? "Decrypted" : "Encrypted",
+                    status: "Decrypted",
                     txId,
                     transitionId,
                     tpk,
                     outputIndex: idx,
-                });
+                };
+
+                // Validate message before adding
+                if (!message.id || !message.content || !message.sender) {
+                    console.warn(`⚠️  Skipping invalid message: id="${message.id}", content="${message.content}", sender="${message.sender}"`);
+                    continue;
+                }
+
+                target.set(id, message);
                 addedAny = true;
+                console.log(`✅ Message added to inbox with ID: ${id}, type: ${messageType}, sender: ${sender}, content length: ${content.length}`);
+                console.log(`📊 Target Map size after adding: ${target.size}`);
+                console.log(`📊 Target Map keys:`, Array.from(target.keys()));
 
                 break;
+            }
+            
+            if (!addedAny) {
+                console.log(`⚠️  No messages added from transition ${transitionId || "unknown"}`);
             }
         }
 
@@ -909,9 +970,10 @@ const MessengerUI: FC<NetworkProps> = ({ network }) => {
     };
 
     // ========== getInboxMessages ==========
-    const getInboxMessages = useCallback(async (force: boolean = false) => {
+    // Optimized sync function: Try wallet records first, then cache, then minimal block scan
+    const getInboxMessages = useCallback(async () => {
         if (!publicKey) {
-            if (force) alert("Please connect your wallet.");
+            alert("Please connect your wallet.");
             return;
         }
 
@@ -920,353 +982,411 @@ const MessengerUI: FC<NetworkProps> = ({ network }) => {
             return;
         }
 
+        const startTime = Date.now();
         setIsSyncing(true);
         isSyncingRef.current = true;
+        setScanProgress(0);
 
         try {
-            console.log(`🔄 Starting inbox sync (force=${force})...`);
-            setStatus("Syncing...");
+            console.log(`🔄 Starting optimized inbox sync for ${publicKey}...`);
+            setStatus("Syncing inbox...");
 
             const allMessagesMap = new Map<string, InboxMessage>();
-
-            // 2. Standard Sync (Wallet API) - Default Priority
-            // We always try to fetch from the wallet first, as requested.
-            setStatus("Fetching from Wallet API...");
-            try {
-                const walletRecords = await fetchRecordsFromWalletAPI(force);
-
-                if (walletRecords && walletRecords.length > 0) {
-                    console.log(`📦 Got ${walletRecords.length} records from wallet`);
-
-                    walletRecords.forEach((r: unknown) => {
-                        let plaintext = "";
-                        let id = "wallet-" + Math.random().toString(36).substr(2, 9);
-
-                        // Extract plaintext from record
-                        if (typeof r === "string") {
-                            plaintext = r;
-                        } else if (typeof r === "object" && r !== null) {
-                            const obj = r as Record<string, unknown>;
-                            if (typeof obj.plaintext === "string") plaintext = obj.plaintext;
-                            else if (typeof obj.content === "string") plaintext = obj.content;
-                            if (typeof obj.id === "string") id = obj.id;
-                        }
-
-                        if (!plaintext) {
-                            console.warn("⚠️  Empty record, skipping");
-                            return;
-                        }
-
-                        const nonceMatch = plaintext.match(/_nonce:\s*([a-zA-Z0-9]+)/);
-                        if (nonceMatch && nonceMatch[1]) {
-                            id = nonceMatch[1];
-                        }
-
-                        const parsedContent = parseMessageContent(plaintext);
-
-                        const ownerMatch = plaintext.match(/owner:\s*([a-zA-Z0-9]+)/);
-                        const senderMatch = plaintext.match(/sender:\s*([a-zA-Z0-9]+)/);
-                        const recipientMatch = plaintext.match(/recipient:\s*([a-zA-Z0-9]+)/);
-
-                        const owner = ownerMatch?.[1];
-                        const sender = senderMatch?.[1];
-                        const recipientAddr = recipientMatch?.[1];
-
-                        if (!sender || !recipientAddr) return;
-
-                        const messageType =
-                            owner === publicKey && recipientAddr !== publicKey ? "sent" : "received";
-
-                        const counterparty = messageType === "sent" ? recipientAddr : sender;
-
-                        let displayName = counterparty;
-                        if (profiles.has(counterparty)) {
-                            displayName = profiles.get(counterparty)?.name || counterparty;
-                        }
-                        if (displayName === counterparty && counterparty.length > 20) {
-                            displayName = counterparty.slice(0, 6) + "..." + counterparty.slice(-6);
-                        }
-
-                        // Use ID as key to allow duplicate content
-                        const key = id || parsedContent + displayName;
-
-                        // Add to map
-                        allMessagesMap.set(key, {
-                            id: id,
-                            type: messageType,
+            const base = getProvableApiBase(network);
+            
+            // ✅ STEP 1: Try wallet records first (fastest, ~1-2 seconds)
+            console.log(`🔄 Step 1: Fetching records from Leo Wallet...`);
+            setStatus("Fetching records from wallet...");
+            const walletRecords = await fetchRecords(PROGRAM_ID);
+            
+            if (walletRecords.length > 0) {
+                console.log(`✅ Found ${walletRecords.length} records from wallet`);
+                
+                walletRecords.forEach(record => {
+                    // Only process received messages
+                    if (record.recipient !== publicKey) return;
+                    
+                    const id = record.nonce || `wallet-${record.sender}-${record.timestamp}`;
+                    const parsedContent = parseMessageContent(record.content);
+                    
+                    allMessagesMap.set(id, {
+                        id: id,
+                        type: "received",
+                        content: parsedContent,
+                        decryptedContent: parsedContent,
+                        originalContent: record.content,
+                        sender: record.sender,
+                        timestamp: record.timestamp * 1000 || Date.now(),
+                        status: "Decrypted"
+                    });
+                });
+                
+                // Save to cache
+                const cachedTxs = Array.from(allMessagesMap.values()).map(msg => ({
+                    txId: msg.id || "",
+                    height: 0,
+                    sender: msg.sender || "",
+                    recipient: publicKey,
+                    content: msg.content || "",
+                    timestamp: (msg.timestamp || Date.now()) / 1000,
+                    cachedAt: Date.now(),
+                }));
+                TxCache.save(publicKey, cachedTxs);
+                
+                console.log(`✅ Loaded ${allMessagesMap.size} messages from wallet records`);
+            } else {
+                // ✅ STEP 2: Check cache if no wallet records
+                console.log(`⚠️ No records from wallet, checking cache...`);
+                setStatus("Checking cache...");
+                const cachedMessages = TxCache.get(publicKey);
+                
+                if (cachedMessages.length > 0) {
+                    console.log(`📦 Loaded ${cachedMessages.length} messages from cache`);
+                    
+                    cachedMessages.forEach(tx => {
+                        if (tx.recipient !== publicKey) return;
+                        
+                        const parsedContent = parseMessageContent(tx.content);
+                        allMessagesMap.set(tx.txId, {
+                            id: tx.txId,
+                            type: "received",
                             content: parsedContent,
-                            isDecrypted: true,
                             decryptedContent: parsedContent,
-                            originalContent: plaintext,
-                            sender: displayName,
-                            timestamp: Date.now(),
-                            status: "Decrypted"
+                            sender: tx.sender,
+                            timestamp: tx.timestamp * 1000,
+                            status: "Cached"
                         });
                     });
-                } else {
-                    console.log("📭 No records from wallet API");
                 }
-            } catch (walletError) {
-                console.error("❌ Wallet API failed:", walletError);
-            }
-
-            if (allMessagesMap.size === 0 || force) {
-                const txIds = await fetchTransactionIdsFromWallet();
-                if (txIds.length > 0) {
-                    const seenKey = `seen_txs_${publicKey}`;
-                    const seenRaw = localStorage.getItem(seenKey);
-                    let seen = new Set<string>();
-                    if (seenRaw) {
-                        try {
-                            const parsed = JSON.parse(seenRaw) as string[];
-                            seen = new Set(parsed);
-                        } catch {
-                            void 0;
-                        }
-                    }
-
-                    // Check more transactions if forcing sync
-                    const limit = force ? 100 : 50;
-                    const toCheck = txIds.slice(-limit).filter((id) => force || !seen.has(id));
-                    
-                    if (toCheck.length > 0) {
-                        console.log(`Checking ${toCheck.length} transactions from history...`);
-                        setStatus(`Checking ${toCheck.length} wallet transactions...`);
-                    }
-
-                    let checkedCount = 0;
-                    for (const txId of toCheck) {
-                        if (!isSyncingRef.current) break;
-                        checkedCount++;
-                        if (checkedCount % 5 === 0) setStatus(`Checking transaction ${checkedCount}/${toCheck.length}...`);
-                        
-                        const result = await addMessagesFromTxId(txId, allMessagesMap);
-                        if (result === "added") {
-                            seen.add(txId);
-                        }
-                        // Reduced delay for transactions as we are fetching specific IDs
-                        await new Promise<void>((resolve) => setTimeout(resolve, 200));
-                    }
-
-                    if (toCheck.length > 0) {
-                        // Keep last 1000 seen txs
-                        localStorage.setItem(seenKey, JSON.stringify(Array.from(seen).slice(-1000)));
-                    }
-                }
-            }
-
-            // Only chain scan if explicitly forced AND we really need to.
-            // But usually transaction history is enough. 
-            // We limit scan depth drastically to avoid "forever" loops.
-            const shouldChainScan = force;
-
-            if (shouldChainScan) {
-                lastChainScanAtRef.current = Date.now();
+                
+                // ✅ STEP 3: Minimal block scan (only if needed, last 200 blocks)
+                // Only scan if we have very few messages or cache is empty
+                if (allMessagesMap.size === 0 || (allMessagesMap.size < 5 && walletRecords.length === 0)) {
+                console.log(`🔍 Step 3: Performing minimal block scan (last 200 blocks)...`);
+                setStatus("Scanning recent blocks...");
+                
+                // Get current block height
+                let currentHeight = 0;
+                let lastSyncedHeight = 0;
+                
                 try {
-                    setStatus("Scanning chain (recent blocks)...");
+                    const heightUrl = `${base}/latest/height`;
+                    const heightResponse = await fetch(heightUrl);
+                    if (heightResponse.ok) {
+                        const heightText = await heightResponse.text();
+                        currentHeight = parseInt(heightText, 10);
+                        console.log(`📊 Current block height: ${currentHeight}`);
+                    }
+                    
+                    const lastSyncedHeightKey = `last_synced_height_${publicKey}_${PROGRAM_ID}`;
+                    const lastSyncedHeightRaw = localStorage.getItem(lastSyncedHeightKey);
+                    lastSyncedHeight = lastSyncedHeightRaw ? parseInt(lastSyncedHeightRaw, 10) : 0;
+                } catch (error) {
+                    console.warn("Failed to get block height:", error);
+                }
 
-                    const base = getProvableApiBase(network);
-
-                    const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-
-                        const fetchTextWithRetry = async (url: string): Promise<string> => {
-                            let lastStatus = 0;
-                            for (let attempt = 0; attempt < 5; attempt++) {
-                                try {
-                                    const res = await fetch(url);
-                                    lastStatus = res.status;
-                                    if (res.status === 429 || res.status >= 500) {
-                                        await delay(800 + attempt * 800);
-                                        continue;
-                                    }
-                                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                                    return await res.text();
-                                } catch {
-                                    await delay(800 + attempt * 800);
-                                    continue;
-                                }
-                            }
-                            throw new Error(`Rate limited (${lastStatus})`);
-                        };
-
-                        const fetchJsonWithRetry = async (url: string): Promise<unknown> => {
-                            let lastStatus = 0;
-                            for (let attempt = 0; attempt < 5; attempt++) {
-                                try {
-                                    const res = await fetch(url);
-                                    lastStatus = res.status;
-                                    if (res.status === 429 || res.status >= 500) {
-                                        await delay(800 + attempt * 800);
-                                        continue;
-                                    }
-                                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                                    return (await res.json()) as unknown;
-                                } catch {
-                                    await delay(800 + attempt * 800);
-                                    continue;
-                                }
-                            }
-                            throw new Error(`Rate limited (${lastStatus})`);
-                        };
-
-                    const heightText = await fetchTextWithRetry(`${base}/latest/height`);
-                    const height = Number.parseInt(heightText, 10);
-                    if (Number.isFinite(height) && height > 0) {
-                        const lastSyncKey = `last_sync_height_${network}_${publicKey}`;
-                        const lastSyncHeightStr = localStorage.getItem(lastSyncKey);
-                        const lastSyncHeight = lastSyncHeightStr ? Number.parseInt(lastSyncHeightStr, 10) : null;
-
-                        const scanDepth = 100; // Increased to 100 to cover more recent history
-                        const start = Number.isFinite(lastSyncHeight as number)
-                            ? Math.max(0, (lastSyncHeight as number) - 2)
-                            : Math.max(0, height - scanDepth);
-                        const end = height + 1;
+                // Optimized: Scan only last 200 blocks (instead of 1000)
+                const OPTIMIZED_SCAN_DEPTH = 200;
+                const checkedTxsKey = `checked_txs_${publicKey}_${PROGRAM_ID}`;
+                const checkedTxsRaw = localStorage.getItem(checkedTxsKey);
+                const checkedTxs = new Set<string>(checkedTxsRaw ? JSON.parse(checkedTxsRaw) : []);
+                let processedTxs = 0;
+                const BATCH_SIZE = 10;
+                const MAX_TXS_TO_PROCESS = 50; // Reduced for faster scan
+                
+                const startHeight = Math.max(1, currentHeight - OPTIMIZED_SCAN_DEPTH);
+                const endHeight = currentHeight;
+                const totalBlocks = endHeight - startHeight + 1;
+                
+                console.log(`🔍 Scanning last ${OPTIMIZED_SCAN_DEPTH} blocks (${startHeight} to ${endHeight})...`);
+                setStatus(`Scanning ${totalBlocks} blocks...`);
+                
+                // Scan from NEWEST to OLDEST
+                for (let h = endHeight; h >= startHeight && processedTxs < MAX_TXS_TO_PROCESS; h -= BATCH_SIZE) {
+                    if (!isSyncingRef.current) break;
+                    
+                    // Update progress
+                    const progress = Math.round(((endHeight - h) / totalBlocks) * 100);
+                    setScanProgress(progress);
+                    
+                    const batchStart = Math.max(startHeight, h - BATCH_SIZE + 1);
+                    setStatus(`Scanning blocks ${h} - ${batchStart}... (${progress}%)`);
+                    
+                    const batchPromises = [];
+                    for (let i = 0; i < BATCH_SIZE && (h - i) >= startHeight; i++) {
+                        batchPromises.push(
+                            fetch(`${base}/block/${h - i}`)
+                                .then(r => r.ok ? r.json() : null)
+                                .catch(() => null)
+                        );
+                    }
+                    
+                    try {
+                        const blocks = await Promise.all(batchPromises);
                         
-                        // Limit the max number of blocks to scan in one go to 50
-                        // even if lastSyncHeight is old.
-                        const actualStart = Math.max(start, end - 50);
-
-                        // If ViewKey is provided, use SDK findRecords (Deep Sync)
-                        if (viewKey && viewKey.startsWith("AViewKey1")) {
-                            setStatus("Deep Syncing with ViewKey...");
-                            console.log("Starting Deep Sync via SDK...");
-                            // Note: We would need an Account object or similar to use findRecords properly with decryption.
-                            // But AleoNetworkClient.findRecords returns Encrypted Records if we don't provide a key?
-                            // Actually, findRecords logic is complex.
-                            // For this MVP, we will just use the View Key to DECRYPT the manually fetched records if needed,
-                            // OR if we can use the SDK.
-                            // However, let's stick to the "Block Scan" but using networkClient.getBlock() for reliability.
-                        }
-
-                        // Fallback: Smart Block Scan (Manual)
-                        // Fetch blocks one by one to avoid 429
-                        for (let h = actualStart; h < end; h++) {
-                            if (!isSyncingRef.current) break;
-                            setStatus(`Scanning block ${h} / ${end - 1}...`);
+                        for (const block of blocks) {
+                            if (!block || processedTxs >= MAX_TXS_TO_PROCESS) break;
                             
-                            try {
-                                // Manual fetch to control URL (AleoNetworkClient might use deprecated testnet3)
-                                const blockUrl = `${base}/block/${h}`;
-                                const block = await fetchJsonWithRetry(blockUrl) as any;
+                            const txs = block.transactions || [];
+                            
+                            for (const txWrapper of txs) {
+                                if (processedTxs >= MAX_TXS_TO_PROCESS) break;
                                 
-                                if (!block) continue;
-
-                                const txs = block.transactions || [];
-                                for (const tx of txs) {
-                                    // Check if transaction interacts with our program
-                                    // SDK object structure might differ slightly from raw JSON
-                                    // We need to be careful with types.
-                                    // Let's assume standard structure or cast to any
-                                    const txAny = tx as any;
-                                    
-                                    // Optimization: Check if program is mentioned in transaction (if possible)
-                                    // or just iterate transitions
-                                    if (!txAny.execution || !txAny.execution.transitions) continue;
-
-                                    for (const transition of txAny.execution.transitions) {
-                                        if (transition.program !== PROGRAM_ID) continue;
-                                        if (transition.function !== "send_message") continue;
-
-                                        // Found a relevant transition!
-                                        // Process outputs
-                                        const outputs = transition.outputs || [];
-                                        for (let idx = 0; idx < outputs.length; idx++) {
-                                            const output = outputs[idx];
-                                            if (output.type !== "record") continue;
-                                            const ciphertext = output.value; // In SDK, it might be 'value'
-
-                                            if (typeof ciphertext === 'string' && ciphertext.startsWith("record1")) {
-                                                // Try to decrypt!
-                                                let decrypted: DecryptedRecord | null = null;
-                                                try {
-                                                    decrypted = await decryptRecord(ciphertext, {
-                                                        tpk: transition.tpk,
-                                                        programId: PROGRAM_ID,
-                                                        functionName: "send_message",
-                                                        indexes: [idx]
-                                                    });
-                                                } catch (e) { console.warn("Decrypt in scanBlocks failed", e); }
-
-                                                const id = `${txAny.id}:${transition.id}:${idx}`;
-                                                
-                                                let messageType = "received";
-                                                if (decrypted) {
-                                                     if (decrypted.sender === publicKey) messageType = "sent";
-                                                }
-
-                                                allMessagesMap.set(id, {
-                                                    id,
-                                                    type: messageType,
-                                                    content: decrypted ? decrypted.content : ciphertext,
-                                                    cipherText: ciphertext,
-                                                    isDecrypted: !!decrypted,
-                                                    sender: decrypted?.sender || "Unknown",
-                                                    timestamp: Date.now(),
-                                                    status: decrypted ? "Decrypted" : "Encrypted",
-                                                    txId: txAny.id
-                                                });
-                                            }
+                                const tx = txWrapper.transaction || txWrapper;
+                                const txId = tx.id || tx.transaction_id || txWrapper.id;
+                                
+                                if (!txId || !txId.startsWith("at") || checkedTxs.has(txId)) continue;
+                                
+                                const execution = tx.execution;
+                                if (execution?.transitions) {
+                                    const hasOurProgram = execution.transitions.some(
+                                        (t: any) => t.program === PROGRAM_ID && t.function === "send_message"
+                                    );
+                                    if (hasOurProgram) {
+                                        processedTxs++;
+                                        const result = await addMessagesFromTxId(txId, allMessagesMap);
+                                        checkedTxs.add(txId);
+                                        if (result === "added") {
+                                            console.log(`✅ Found new message in ${txId}`);
                                         }
                                     }
                                 }
-                            } catch (e) {
-                                console.warn(`Failed to scan block ${h}`, e);
                             }
-
-                            // Gentle delay to prevent 429 (reduced from 1000ms as we scan fewer blocks)
-                            await delay(200); 
                         }
-
-                        localStorage.setItem(lastSyncKey, String(height));
+                    } catch (batchError) {
+                        console.warn("Batch scan error:", batchError);
                     }
-                } catch (e) {
-                    console.warn("Chain scan failed:", e);
+                    
+                    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+                }
+                
+                    // Save to cache
+                    const existingCached = TxCache.get(publicKey);
+                    const newCachedTxs = Array.from(allMessagesMap.values())
+                        .filter(m => !existingCached.some(c => c.txId === m.id))
+                        .map(msg => ({
+                            txId: msg.id || "",
+                            height: 0,
+                            sender: msg.sender || "",
+                            recipient: publicKey,
+                            content: msg.content || "",
+                            timestamp: (msg.timestamp || Date.now()) / 1000,
+                            cachedAt: Date.now(),
+                        }));
+                    if (newCachedTxs.length > 0) {
+                        TxCache.append(publicKey, newCachedTxs);
+                    }
+                    
+                    // Save checked transactions
+                    const allCheckedTxs = Array.from(checkedTxs).slice(-500);
+                    localStorage.setItem(checkedTxsKey, JSON.stringify(allCheckedTxs));
+                    
+                    // Save last synced height
+                    if (currentHeight > 0) {
+                        const lastSyncedHeightKey = `last_synced_height_${publicKey}_${PROGRAM_ID}`;
+                        localStorage.setItem(lastSyncedHeightKey, String(currentHeight));
+                    }
+                    
+                    console.log(`📊 Block scan complete: processed ${processedTxs} transactions, found ${allMessagesMap.size} message(s)`);
                 }
             }
+            
+            // ✅ STEP 4: Merge with existing messages
 
-            // 3. Update State
+            // Step 5: Merge with existing messages
+            console.log(`📊 Step 5: Merging messages - allMessagesMap has ${allMessagesMap.size} new message(s)`);
             if (allMessagesMap.size > 0) {
-                setMessages(prev => {
-                    // Merge with existing messages
-                    const merged = new Map<string, InboxMessage>();
-
-                    // Add existing messages
-                    prev.forEach(m => {
-                        // Use ID if available, otherwise content (legacy)
-                        const key = m.id || m.content + (m.sender || "");
-                        merged.set(key, m);
-                    });
-
-                    // Add new messages (will update existing if same key)
-                    allMessagesMap.forEach((m, key) => {
-                        merged.set(key, m);
-                    });
-
-                    return Array.from(merged.values());
+                console.log(`📨 New messages to merge:`);
+                allMessagesMap.forEach((m, key) => {
+                    console.log(`  - Key: "${key}", ID: "${m.id}", Type: "${m.type}", Sender: "${m.sender}", Content: "${m.content?.substring(0, 30)}..."`);
                 });
-                setStatus(`Sync Complete! ${allMessagesMap.size} messages.`);
-                console.log(`✅ Inbox updated with ${allMessagesMap.size} messages`);
+            }
+            
+            // CRITICAL: Use functional update and ensure we merge correctly
+            setMessages(prev => {
+                console.log(`📊 Step 5a: Current messages in state: ${prev.length}`);
+                console.log(`📊 Step 5b: allMessagesMap size: ${allMessagesMap.size}`);
+                if (allMessagesMap.size > 0) {
+                    console.log(`📊 Step 5c: allMessagesMap keys:`, Array.from(allMessagesMap.keys()));
+                }
+                
+                const merged = new Map<string, InboxMessage>();
+                
+                // Add existing messages first - use ID as primary key (must match allMessagesMap key format)
+                prev.forEach(m => {
+                    // Use ID directly, same as allMessagesMap uses
+                    const key = m.id;
+                    if (key) {
+                        // Fix: Ensure type is set for existing messages
+                        if (!m.type && (m.content || m.decryptedContent || m.sender)) {
+                            m.type = "received";
+                        }
+                        merged.set(key, m);
+                    } else {
+                        console.warn(`⚠️  Existing message without ID, skipping:`, m);
+                    }
+                });
+
+                // Add/update with new messages - use ID from allMessagesMap key
+                let addedCount = 0;
+                let updatedCount = 0;
+                allMessagesMap.forEach((m, mapKey) => {
+                    // The mapKey IS the ID from addMessagesFromTxId - use it directly
+                    // m.id should also be set to mapKey, but use mapKey as source of truth
+                    const messageKey = mapKey; // Use mapKey directly - it's the ID
+                    
+                    if (!messageKey) {
+                        console.warn(`⚠️  Skipping message without ID:`, m);
+                        return;
+                    }
+                    
+                    // Ensure m.id matches mapKey
+                    if (m.id !== messageKey) {
+                        console.warn(`⚠️  Message ID mismatch: m.id="${m.id}", mapKey="${messageKey}", fixing...`);
+                        m.id = messageKey;
+                    }
+                    
+                    // CRITICAL: Ensure type is set before adding
+                    if (!m.type) {
+                        m.type = "received";
+                    }
+                    
+                    const existing = merged.get(messageKey);
+                    if (!existing) {
+                        merged.set(messageKey, m);
+                        addedCount++;
+                        console.log(`✅ Added NEW message: key="${messageKey}", id="${m.id}", type="${m.type}", sender="${m.sender}", content="${m.content?.substring(0, 20)}..."`);
+                    } else {
+                        // Update existing with new data (prefer new data)
+                        const updated = { ...existing, ...m, id: messageKey };
+                        if (!updated.type) {
+                            updated.type = "received";
+                        }
+                        merged.set(messageKey, updated);
+                        updatedCount++;
+                        console.log(`🔄 Updated existing message: key="${messageKey}"`);
+                    }
+                });
+                
+                const finalMessages = Array.from(merged.values());
+                console.log(`✅ Merge complete: ${finalMessages.length} total messages (${addedCount} new, ${updatedCount} updated)`);
+                console.log(`📋 Final message IDs (first 10):`, finalMessages.slice(0, 10).map(m => ({ 
+                    id: m.id?.substring(0, 30), 
+                    type: m.type,
+                    sender: m.sender?.substring(0, 20),
+                    hasContent: !!(m.content || m.decryptedContent)
+                })));
+                
+                // Verify new messages are in final array
+                const newMessageIds = Array.from(allMessagesMap.keys());
+                const foundInFinal = newMessageIds.filter(id => finalMessages.some(m => m.id === id));
+                console.log(`🔍 Verification: ${foundInFinal.length}/${newMessageIds.length} new messages in final array`);
+                if (foundInFinal.length < newMessageIds.length) {
+                    console.error(`❌ CRITICAL: Some new messages missing from final array!`);
+                    const missing = newMessageIds.filter(id => !finalMessages.some(m => m.id === id));
+                    console.error(`Missing IDs:`, missing);
+                }
+                
+                // CRITICAL: Ensure all messages have type="received" before returning
+                finalMessages.forEach(m => {
+                    if (!m.type && (m.content || m.decryptedContent || m.sender)) {
+                        m.type = "received";
+                    }
+                });
+                
+                // Force a new array reference to ensure React detects the change
+                const result = [...finalMessages];
+                
+                // Log new messages specifically
+                if (allMessagesMap.size > 0) {
+                    const newMessageIds = Array.from(allMessagesMap.keys());
+                    const newMessagesInResult = result.filter(m => newMessageIds.includes(m.id));
+                    console.log(`📊 Returning ${result.length} messages to state (${newMessagesInResult.length} new messages included)`);
+                    if (newMessagesInResult.length > 0) {
+                        console.log(`✅ New messages in result:`, newMessagesInResult.map(m => ({
+                            id: m.id?.substring(0, 30),
+                            type: m.type,
+                            sender: m.sender?.substring(0, 20),
+                            hasContent: !!(m.content || m.decryptedContent)
+                        })));
+                    }
+                } else {
+                    console.log(`📊 Returning ${result.length} messages to state`);
+                }
+                
+                return result;
+            });
+            
+            // Wait a bit to ensure state update is processed
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
+            console.log(`📊 Step 6: Updating status...`);
+            const newCount = allMessagesMap.size;
+            if (newCount > 0) {
+                setStatus(`Sync Complete! Found ${newCount} new message(s) from blockchain.`);
             } else {
-                setStatus("Sync Complete. No new messages.");
+                setStatus("Sync Complete. No new messages found on blockchain.");
             }
 
             setLastSyncTime(new Date());
+            console.log(`✅ Sync function completed successfully`);
+            
+            // Final verification - check if messages are in state
+            setTimeout(() => {
+                setMessages(current => {
+                    console.log(`🔍 FINAL CHECK: ${current.length} messages in state after sync`);
+                    const newMessageIds = Array.from(allMessagesMap.keys());
+                    const foundNew = newMessageIds.filter(id => current.some(m => m.id === id));
+                    console.log(`🔍 Found ${foundNew.length}/${newMessageIds.length} new messages in state`);
+                    if (foundNew.length < newMessageIds.length) {
+                        console.error(`❌ PROBLEM: Some new messages are missing from state!`);
+                        console.error(`Missing IDs:`, newMessageIds.filter(id => !current.some(m => m.id === id)));
+                    } else if (foundNew.length > 0) {
+                        console.log(`✅ SUCCESS: All ${foundNew.length} new messages are in state!`);
+                        // Log first few new messages to verify they're correct
+                        const newMessages = current.filter(m => newMessageIds.includes(m.id));
+                        console.log(`📋 New messages in state:`, newMessages.slice(0, 3).map(m => ({
+                            id: m.id?.substring(0, 20),
+                            type: m.type,
+                            sender: m.sender?.substring(0, 20),
+                            hasContent: !!m.content
+                        })));
+                    }
+                    return current;
+                });
+            }, 1000);
 
         } catch (error) {
             console.error("❌ Sync failed:", error);
             setStatus("Sync failed. See console.");
         } finally {
+            console.log(`🔄 Sync finished - cleaning up...`);
             setIsSyncing(false);
             isSyncingRef.current = false;
+            console.log(`✅ Sync cleanup complete`);
         }
-    }, [publicKey, network, profiles]);
+    }, [publicKey, network, adapter, fetchRecords]);
+    
+    // Auto-sync removed per user request
+
+    const forceRefresh = useCallback(async () => {
+        if (!publicKey) return;
+        console.log("🔄 Force refresh - clearing cache...");
+        TxCache.clear(publicKey);
+        setScanProgress(0);
+        await getInboxMessages();
+    }, [publicKey, getInboxMessages]);
 
     const handleImportTx = async () => {
         const txId = importTxId.trim();
         if (!publicKey) return alert("Connect wallet first");
-        if (!/^at[0-9a-z]+$/i.test(txId)) return alert("Invalid tx id (expected at...)");
+        
+        // Support both transaction ID (at1...) and transition ID (au1...)
+        if (!/^(at|au)[0-9a-z]+$/i.test(txId)) {
+            return alert("Invalid transaction/transition ID (expected at... or au...)");
+        }
 
-        setStatus("Importing transaction...");
+        setStatus("Importing transaction/transition...");
         const map = new Map<string, InboxMessage>();
         const result = await addMessagesFromTxId(txId, map);
 
@@ -1276,7 +1396,7 @@ const MessengerUI: FC<NetworkProps> = ({ network }) => {
         }
 
         if (result !== "added" || map.size === 0) {
-            setStatus("No messages found for this account in this tx.");
+            setStatus("No messages found for this account in this transaction/transition.");
             return;
         }
 
@@ -1291,173 +1411,7 @@ const MessengerUI: FC<NetworkProps> = ({ network }) => {
     };
 
 
-    // Polling for new messages
-    useEffect(() => {
-        if (!publicKey) return;
-        getInboxMessages(false);
-        const interval = window.setInterval(() => {
-            getInboxMessages(false);
-        }, 30000);
-        return () => {
-            clearInterval(interval);
-        };
-    }, [publicKey, getInboxMessages]);
 
-    const decryptMessage = async (m: InboxMessage) => {
-        if (!adapter?.decrypt && !viewKey) {
-            alert("Wallet does not support decryption or is not connected, and no View Key provided.");
-            return;
-        }
-
-        try {
-            setStatus("Decrypting...");
-
-            const ciphertext = m.cipherText || m.content;
-
-            if (!ciphertext || typeof ciphertext !== 'string') {
-                throw new Error("Invalid content to decrypt (not a string)");
-            }
-
-            let decryptedText: string | null = null;
-            
-            // 1. Try Decrypt (Wallet or ViewKey via helper)
-            try {
-                decryptedText = await decryptCiphertextToText(ciphertext, {
-                    tpk: m.tpk,
-                    programId: PROGRAM_ID,
-                    functionName: "send_message",
-                    indexes: typeof m.outputIndex === "number" ? [m.outputIndex] : [0, 1],
-                });
-            } catch(e) { console.warn("Helper decrypt failed", e); }
-
-            // 2. Try View Key (Direct Fallback if helper returned null)
-            if (!decryptedText && viewKey && viewKey.startsWith("AViewKey1")) {
-                try {
-                     const vk = ViewKey.from_string(viewKey);
-                     const cleanCiphertext = sanitizeRecordString(ciphertext);
-                     
-                     console.log("ViewKey Decrypting (len=" + cleanCiphertext.length + "):", cleanCiphertext.slice(0, 30) + "...");
-                     
-                     let recordCiphertext;
-                     try {
-                        recordCiphertext = RecordCiphertext.fromString(cleanCiphertext);
-                     } catch(e: any) {
-                         // Try direct decrypt first before giving up
-                         try {
-                             console.log("Attempting direct vk.decrypt(string)...");
-                             // @ts-ignore
-                             const directDecrypted = vk.decrypt(cleanCiphertext);
-                             if (directDecrypted) {
-                                 decryptedText = directDecrypted.toString();
-                                 console.log("Direct ViewKey Decrypt Success!");
-                                 // Skip plaintext check if success
-                             }
-                         } catch (dErr) {
-                             // console.warn("Direct vk.decrypt failed:", dErr);
-                             
-                             // If it fails, maybe it's already a plaintext record?
-                             // Try parsing as plaintext just in case
-                             console.warn("RecordCiphertext parse failed:", e.message);
-                             try {
-                                 const recordPlaintext = RecordPlaintext.fromString(cleanCiphertext);
-                                 decryptedText = recordPlaintext.toString();
-                                 console.log("Parsed as Plaintext Record directly.");
-                             } catch(e2: any) {
-                                 console.warn("RecordPlaintext parse failed:", e2.message);
-                                 console.warn("Failed String Hex:", cleanCiphertext.split('').map(c => c.charCodeAt(0).toString(16)).join(' '));
-                                 throw e; // Throw original error to show in status
-                             }
-                         }
-                     }
-
-                     if (recordCiphertext && recordCiphertext.isOwner(vk)) {
-                         const recordPlaintext = recordCiphertext.decrypt(vk);
-                         decryptedText = recordPlaintext.toString();
-                     }
-
-                     if (decryptedText) {
-                         // Parse "content" field
-                         // Example: { owner: ..., content: 12345field, ... }
-                         const match = decryptedText.match(/content:\s*([^\s,.}]+)/);
-                         if (match && match[1]) {
-                            decryptedText = match[1];
-                         }
-                         setStatus("Decrypted via View Key!");
-                     }
-                } catch (e: any) { 
-                    console.warn("ViewKey decrypt failed", e); 
-                    setStatus("ViewKey decrypt failed: " + (e.message || e));
-                }
-            }
-
-            if (!decryptedText) {
-                setStatus("Decrypt failed (no access to this record).");
-                return;
-            }
-
-            const decodedContent = parseMessageContent(decryptedText);
-            const senderMatch = decryptedText.match(/sender:\s*([a-zA-Z0-9]+)/);
-            const recipientMatch = decryptedText.match(/recipient:\s*([a-zA-Z0-9]+)/);
-            const senderAddr = senderMatch?.[1] || "Unknown";
-            const recipientAddr = recipientMatch?.[1] || "";
-
-            const messageType = recipientAddr === publicKey ? "received" : "sent";
-            const counterparty = messageType === "sent" ? recipientAddr : senderAddr;
-
-            let displayName = counterparty;
-            if (counterparty && profiles.has(counterparty)) {
-                displayName = profiles.get(counterparty)?.name || counterparty;
-            }
-            if (displayName === counterparty && counterparty.length > 20) {
-                displayName = counterparty.slice(0, 6) + "..." + counterparty.slice(-6);
-            }
-
-            setMessages(prev => prev.map(msg => {
-                if (msg.id === m.id) {
-                    return {
-                        ...msg,
-                        type: messageType,
-                        sender: displayName,
-                        content: decodedContent,
-                        decryptedContent: decodedContent,
-                        originalContent: decryptedText,
-                        isDecrypted: true
-                    };
-                }
-                return msg;
-            }));
-            setStatus("Decrypted!");
-        } catch (e: unknown) {
-            console.error("Decrypt error", e);
-            setStatus("Decrypt failed: " + getErrorMessage(e));
-        }
-    };
-
-    const toggleMessagePrivacy = (m: InboxMessage) => {
-        setMessages(prev => prev.map(msg => {
-            if (msg.id === m.id) {
-                if (msg.isDecrypted) {
-                    // Hide content
-                    return {
-                        ...msg,
-                        content: msg.originalContent || "🔒 Encrypted",
-                        isDecrypted: false
-                    };
-                } else {
-                    // Show content
-                    if (msg.decryptedContent) {
-                        return {
-                            ...msg,
-                            content: msg.decryptedContent,
-                            isDecrypted: true
-                        };
-                    }
-                    return msg;
-                }
-            }
-            return msg;
-        }));
-    };
 
     const renderStatusLinks = () => {
         return null;
@@ -1465,104 +1419,6 @@ const MessengerUI: FC<NetworkProps> = ({ network }) => {
 
     return (
         <div style={{ padding: "20px" }}>
-
-            {/* Advanced Sync Toggle */}
-            <div style={{ marginBottom: "15px", textAlign: "right" }}>
-                <button
-                    onClick={() => setShowAdvanced(!showAdvanced)}
-                    style={{ background: "transparent", color: "#666", border: "none", textDecoration: "underline", fontSize: "12px", cursor: "pointer", padding: 0 }}
-                >
-                    {showAdvanced ? "Hide Advanced Sync Settings" : "Advanced Sync Settings"}
-                </button>
-                {showAdvanced && (
-                    <div style={{ marginTop: "10px", padding: "15px", border: "1px dashed #aaa", borderRadius: "4px", background: "#f9f9f9", textAlign: "left" }}>
-                        <p style={{ margin: "0 0 8px 0", fontSize: "14px", fontWeight: "bold" }}>Deep Sync (SDK)</p>
-                        <p style={{ fontSize: "12px", color: "#555", marginBottom: "8px" }}>
-                            If the wallet sync is incomplete, provide your View Key to scan the blockchain directly.
-                            Your key is used locally and never stored or transmitted.
-                        </p>
-                        <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-                            <input
-                                type="password"
-                                placeholder="Enter View Key (AViewKey1...)"
-                                value={viewKeyInput}
-                                onChange={(e) => setViewKeyInput(e.target.value)}
-                                style={{ flex: 1, padding: "8px", fontFamily: "monospace", border: "1px solid #ccc" }}
-                            />
-                            <button
-                                onClick={() => {
-                                    if (!viewKeyInput.trim()) {
-                                        setViewKey("");
-                                        alert("View Key cleared.");
-                                        return;
-                                    }
-                                    if (!viewKeyInput.startsWith("AViewKey1")) {
-                                        alert("Invalid View Key format. Must start with AViewKey1...");
-                                        return;
-                                    }
-                                    setViewKey(viewKeyInput.trim());
-                                    alert("View Key Applied successfully! It will be used for decryption.");
-                                }}
-                                style={{ padding: "8px 15px", cursor: "pointer", background: "#333", color: "white", border: "none", borderRadius: "4px" }}
-                            >
-                                Apply
-                            </button>
-                        </div>
-                        {viewKey && (
-                            <div style={{ marginTop: "5px", color: "green", fontSize: "12px", fontWeight: "bold" }}>
-                                ✓ View Key Active
-                            </div>
-                        )}
-
-                        <hr style={{ margin: "15px 0", border: "0", borderTop: "1px dashed #ccc" }} />
-                        
-                        <p style={{ margin: "0 0 8px 0", fontSize: "14px", fontWeight: "bold" }}>Manual Transaction Import</p>
-                        <p style={{ fontSize: "12px", color: "#555", marginBottom: "8px" }}>
-                            If a transaction is missing, paste its ID here (at1...) to import it manually.
-                        </p>
-                        <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-                            <input
-                                placeholder="Transaction ID (at1...)"
-                                value={importTxId}
-                                onChange={(e) => setImportTxId(e.target.value)}
-                                style={{ flex: 1, padding: "8px", fontFamily: "monospace", border: "1px solid #ccc" }}
-                            />
-                            <button
-                                onClick={async () => {
-                                    if (!importTxId.trim()) return;
-                                    setStatus("Importing transaction...");
-                                    try {
-                                        const tempMap = new Map<string, InboxMessage>();
-                                        const res = await addMessagesFromTxId(importTxId.trim(), tempMap);
-                                        
-                                        if (tempMap.size > 0) {
-                                             setMessages(prev => {
-                                                const merged = new Map<string, InboxMessage>();
-                                                prev.forEach(m => merged.set(m.id || m.content + (m.sender || ""), m));
-                                                tempMap.forEach((m, key) => merged.set(key, m));
-                                                return Array.from(merged.values());
-                                            });
-                                            setStatus("Transaction imported successfully!");
-                                            alert(`Success! Imported ${tempMap.size} message(s).`);
-                                            setImportTxId(""); // Clear input
-                                        } else {
-                                            setStatus("Transaction found but no messages.");
-                                            alert("Transaction found, but no relevant messages for you were found inside it (or decryption failed).");
-                                        }
-                                    } catch (e) {
-                                        console.error(e);
-                                        setStatus("Failed to import transaction.");
-                                        alert("Failed to import: " + getErrorMessage(e));
-                                    }
-                                }}
-                                style={{ padding: "8px 15px", cursor: "pointer", background: "#333", color: "white", border: "none", borderRadius: "4px" }}
-                            >
-                                Import
-                            </button>
-                        </div>
-                    </div>
-                )}
-            </div>
 
             <div className="section-block">
                 <h3>Your Profile</h3>
@@ -1646,9 +1502,45 @@ const MessengerUI: FC<NetworkProps> = ({ network }) => {
                             </div>
                         </div>
 
+                        <PermissionAlert 
+                            hasPermission={hasPermission} 
+                            onReconnect={() => {
+                                disconnect();
+                                setTimeout(() => connect(), 100);
+                            }} 
+                        />
+
+                        {isSyncing && scanProgress > 0 && (
+                            <div style={{ 
+                                padding: "8px", 
+                                backgroundColor: "#e3f2fd", 
+                                borderRadius: "4px",
+                                fontSize: "0.9em"
+                            }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
+                                    <span>Scanning blocks...</span>
+                                    <span>{scanProgress}%</span>
+                                </div>
+                                <div style={{ 
+                                    width: "100%", 
+                                    height: "6px", 
+                                    backgroundColor: "#ddd", 
+                                    borderRadius: "3px",
+                                    overflow: "hidden"
+                                }}>
+                                    <div style={{ 
+                                        width: `${scanProgress}%`, 
+                                        height: "100%", 
+                                        backgroundColor: "#2196f3",
+                                        transition: "width 0.3s ease"
+                                    }}></div>
+                                </div>
+                            </div>
+                        )}
+
                         <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
                             <input
-                                placeholder="Paste txId (at...)"
+                                placeholder="Paste txId (at...) or transition (au...)"
                                 value={importTxId}
                                 onChange={(e) => setImportTxId(e.target.value)}
                                 style={{
@@ -1676,7 +1568,10 @@ const MessengerUI: FC<NetworkProps> = ({ network }) => {
                                 IMPORT
                             </button>
                             <button
-                                onClick={() => getInboxMessages(true)}
+                                onClick={async () => {
+                                    console.log("🔄 User clicked SYNC button - fetching from wallet...");
+                                    await getInboxMessages();
+                                }}
                                 disabled={isSyncing}
                                 style={{
                                     whiteSpace: "nowrap",
@@ -1686,60 +1581,67 @@ const MessengerUI: FC<NetworkProps> = ({ network }) => {
                                     border: "2px solid #000",
                                     cursor: isSyncing ? "not-allowed" : "pointer"
                                 }}
-                                title="Scan blockchain for new messages"
+                                title="Sync messages from wallet"
                             >
-                                {isSyncing ? "SCANNING..." : "SYNC & SCAN"}
+                                {isSyncing ? "SYNCING..." : "SYNC"}
+                            </button>
+                            <button
+                                onClick={forceRefresh}
+                                disabled={isSyncing}
+                                style={{
+                                    whiteSpace: "nowrap",
+                                    padding: "8px 12px",
+                                    background: isSyncing ? "#ccc" : "#fff",
+                                    color: "#000",
+                                    border: "2px solid #000",
+                                    cursor: isSyncing ? "not-allowed" : "pointer",
+                                    fontSize: "11px"
+                                }}
+                                title="Force refresh (clear cache and rescan)"
+                            >
+                                🔄 Force
                             </button>
                         </div>
                     </div>
 
                     {messages.length > 0 ? (
                         <ul className="inbox-list fade-in">
-                            {[...messages].reverse().map((m, idx) => (
-                                <li key={m.id || idx} className="list-item">
-                                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.8em", color: "#666", marginBottom: "5px" }}>
-                                        <span><strong>{m.type === "sent" ? "To:" : "From:"}</strong> {m.sender ? (m.sender.length > 20 ? m.sender.slice(0, 6) + "..." + m.sender.slice(-6) : m.sender) : "Unknown"}</span>
-                                        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                                            <span>{m.id ? m.id.slice(0, 6) + "..." : ""}</span>
-                                            <button
-                                                onClick={() => {
-                                                    if (m.isDecrypted) {
-                                                        toggleMessagePrivacy(m);
-                                                    } else {
-                                                        if (m.decryptedContent) {
-                                                            toggleMessagePrivacy(m);
-                                                        } else {
-                                                            decryptMessage(m);
-                                                        }
-                                                    }
-                                                }}
-                                                style={{
-                                                    background: "none",
-                                                    border: "none",
-                                                    cursor: "pointer",
-                                                    fontSize: "1.2em",
-                                                    padding: "0 5px"
-                                                }}
-                                                title={m.isDecrypted ? "Encrypt (Hide)" : "Decrypt (Show)"}
-                                            >
-                                                {m.isDecrypted ? "🔓" : "🔒"}
-                                            </button>
-                                        </div>
-                                    </div>
+                            {[...messages]
+                                .filter(m => {
+                                    // Fix: Ensure type is set for old messages from localStorage
+                                    if (!m.type && (m.content || m.decryptedContent || m.sender)) {
+                                        m.type = "received";
+                                    }
+                                    
+                                    // Only show received messages in inbox
+                                    if (m.type === "sent") return false;
+                                    
+                                    // Ensure message has content
+                                    if (!m.content && !m.decryptedContent) return false;
+                                    
+                                    // Ensure message has type
+                                    if (!m.type || m.type !== "received") return false;
+                                    
+                                    return true;
+                                })
+                                .reverse()
+                                .map((m, idx) => {
+                                    return (
+                                        <li key={m.id || idx} className="list-item">
+                                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.8em", color: "#666", marginBottom: "5px" }}>
+                                                <span><strong>{m.type === "sent" ? "To:" : "From:"}</strong> {m.sender ? (m.sender.length > 20 ? m.sender.slice(0, 6) + "..." + m.sender.slice(-6) : m.sender.replace(/\.private$/, "")) : "Unknown"}</span>
+                                                {m.id && (
+                                                    <span style={{ fontSize: "0.8em", color: "#999" }}>{m.id.slice(0, 6) + "..."}</span>
+                                                )}
+                                            </div>
 
-                                    {m.isDecrypted ? (
-                                        <div style={{ marginTop: "5px", padding: "10px", background: "#f1f8e9", borderLeft: "4px solid #4caf50", borderRadius: "4px" }}>
-                                            <strong>Message:</strong><br />
-                                            <span style={{ fontSize: "1.1em" }}>{parseMessageContent(m.content)}</span>
-                                        </div>
-                                    ) : (
-                                        <div style={{ marginTop: "5px", padding: "10px", background: "#f5f5f5", borderLeft: "4px solid #999", borderRadius: "4px", color: "#666" }}>
-                                            <strong>Encrypted Message:</strong><br />
-                                            <span style={{ fontStyle: "italic", fontSize: "0.9em" }}>{m.content.includes("field") ? "Ciphertext: " + m.content.slice(0, 15) + "..." : "🔒 Content Hidden"}</span>
-                                        </div>
-                                    )}
-                                </li>
-                            ))}
+                                            <div style={{ marginTop: "5px", padding: "10px", background: "#f1f8e9", borderLeft: "4px solid #4caf50", borderRadius: "4px" }}>
+                                                <strong>Message:</strong><br />
+                                                <span style={{ fontSize: "1.1em" }}>{parseMessageContent(m.content || m.decryptedContent || "")}</span>
+                                            </div>
+                                        </li>
+                                    );
+                                })}
                         </ul>
                     ) : (
                         <p>No messages found or not synced.</p>
@@ -1832,7 +1734,7 @@ const MessengerUI: FC<NetworkProps> = ({ network }) => {
 };
 
 function App() {
-    const [network, setNetwork] = useState(WalletAdapterNetwork.TestnetBeta);
+    const network = WalletAdapterNetwork.TestnetBeta;
 
     const wallets = useMemo(
         () => [
@@ -1859,33 +1761,8 @@ function App() {
             autoConnect
         >
             <div className="App">
-                <h1>Aleo Private Messenger</h1>
+                <Header programId={PROGRAM_ID} />
 
-                <div style={{ marginBottom: "20px", padding: "12px 20px", background: "#fff", border: "2px solid #000", display: "inline-block" }}>
-                    <label style={{ marginRight: "15px", fontWeight: "bold", fontFamily: "Space Mono, monospace" }}>NETWORK:</label>
-                    <select
-                        value={network}
-                        onChange={(e) => setNetwork(e.target.value as WalletAdapterNetwork)}
-                        style={{
-                            padding: "8px 12px",
-                            border: "2px solid #000",
-                            background: "#fff",
-                            color: "#000", // Ensure text is black
-                            fontFamily: "Space Mono, monospace",
-                            fontSize: "0.9em",
-                            cursor: "pointer",
-                            fontWeight: "bold",
-                            appearance: "auto" // Ensure standard dropdown appearance
-                        }}
-                    >
-                        <option value={WalletAdapterNetwork.TestnetBeta} style={{ color: "#000", background: "#fff" }}>TESTNET BETA</option>
-                        <option value={WalletAdapterNetwork.MainnetBeta} style={{ color: "#000", background: "#fff" }}>MAINNET BETA</option>
-                    </select>
-                </div>
-
-                <div className="card">
-                    <WalletConnectButton network={network} />
-                </div>
                 <MessengerUI network={network} />
             </div>
         </WalletProvider>
