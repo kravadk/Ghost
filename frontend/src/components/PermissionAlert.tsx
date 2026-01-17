@@ -23,11 +23,11 @@ export const PermissionAlert: React.FC<PermissionAlertProps> = ({
             margin: "0 auto 16px auto"
         }}>
             <div style={{ fontWeight: "bold", marginBottom: "8px", fontSize: "16px" }}>
-                ⚠️ Обмежений доступ до гаманця
+                ⚠️ Limited Wallet Access
             </div>
             <div style={{ marginBottom: "12px", lineHeight: "1.5" }}>
-                Для швидкої синхронізації повідомлень потрібен доступ до <strong>On-Chain History</strong>.
-                Без цього буде використано повільне сканування блоків (~5-10 секунд).
+                For fast message synchronization, <strong>On-Chain History</strong> access is required.
+                Without it, slower block scanning will be used (~5-10 seconds).
             </div>
             <button
                 onClick={onReconnect}
@@ -47,7 +47,7 @@ export const PermissionAlert: React.FC<PermissionAlertProps> = ({
                     e.currentTarget.style.backgroundColor = "#007bff";
                 }}
             >
-                Переподключити з вищим рівнем доступу
+                Reconnect with Higher Access Level
             </button>
         </div>
     );

@@ -23,7 +23,7 @@ export const useWalletRecords = () => {
         
         setIsLoading(true);
         try {
-            // Спроба отримати records через requestRecordPlaintexts (потребує OnChainHistory)
+            // Try to get records via requestRecordPlaintexts (requires OnChainHistory)
             let records: Array<{ id?: string; plaintext: string }> = [];
             
             if (adapter.requestRecordPlaintexts) {
@@ -43,13 +43,13 @@ export const useWalletRecords = () => {
                 }
             }
             
-            // Fallback: спроба через requestRecords (encrypted)
+            // Fallback: try via requestRecords (encrypted)
             if (records.length === 0 && adapter.requestRecords) {
                 try {
                     const encryptedRecords = await adapter.requestRecords(programId);
                     if (encryptedRecords && encryptedRecords.length > 0) {
                         console.log(`✅ Fetched ${encryptedRecords.length} encrypted records via requestRecords`);
-                        // Якщо є decrypt метод, спробуємо розшифрувати
+                        // If decrypt method exists, try to decrypt
                         if (adapter.decrypt) {
                             const decryptedRecords: Array<{ id?: string; plaintext: string }> = [];
                             for (const record of encryptedRecords) {
@@ -97,7 +97,7 @@ export const useWalletRecords = () => {
                 return [];
             }
             
-            // Парсинг records
+            // Parse records
             const parsedRecords: RecordMessage[] = records
                 .map(record => parseMessageRecord(record.plaintext || String(record)))
                 .filter(Boolean) as RecordMessage[];
@@ -117,7 +117,7 @@ export const useWalletRecords = () => {
     return { fetchRecords, hasPermission, isLoading };
 };
 
-// Helper для парсингу Leo record у TypeScript об'єкт
+// Helper to parse Leo record into TypeScript object
 function parseMessageRecord(recordString: string): RecordMessage | null {
     try {
         // Leo record format:

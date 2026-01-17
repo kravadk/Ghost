@@ -1,31 +1,43 @@
 program priv_messenger_leotest_007.aleo;
 
-record Message:
+record Donation:
     owner as address.public;
     sender as address.private;
     recipient as address.private;
-    content as field.private;
+    amount as u64.private;
+    message as field.private;
+    timestamp as u64.private;
 
 struct ProfileInfo:
     name as field;
     bio as field;
 
-struct MessageMeta:
+struct DonationMeta:
     sender as address;
-    content_hash as field;
+    recipient as address;
+    amount as u64;
+    message_hash as field;
     timestamp as u64;
 
 mapping profiles:
     key as address.public;
     value as ProfileInfo.public;
 
-mapping message_count:
+mapping donation_count:
     key as address.public;
     value as u64.public;
 
-mapping message_index:
+mapping donation_index:
     key as field.public;
-    value as MessageMeta.public;
+    value as DonationMeta.public;
+
+mapping sent_donation_count:
+    key as address.public;
+    value as u64.public;
+
+mapping sent_donation_index:
+    key as field.public;
+    value as DonationMeta.public;
 
 function create_profile:
     input r0 as field.public;
@@ -40,31 +52,6 @@ finalize create_profile:
     cast r1 r2 into r3 as ProfileInfo;
     set r3 into profiles[r0];
 
-function send_message:
-    input r0 as address.public;
-    input r1 as field.private;
-    cast r0 self.caller r0 r1 into r2 as Message.record;
-    cast self.caller self.caller r0 r1 into r3 as Message.record;
-    hash.bhp256 r1 into r4 as field;
-    async send_message r0 self.caller r4 into r5;
-    output r2 as Message.record;
-    output r3 as Message.record;
-    output r5 as priv_messenger_leotest_007.aleo/send_message.future;
-
-finalize send_message:
-    input r0 as address.public;
-    input r1 as address.public;
-    input r2 as field.public;
-    get.or_use message_count[r0] 0u64 into r3;
-    hash.bhp256 r0 into r4 as field;
-    cast r3 into r5 as field;
-    add r4 r5 into r6;
-    cast block.height into r7 as u64;
-    cast r1 r2 r7 into r8 as MessageMeta;
-    set r8 into message_index[r6];
-    add r3 1u64 into r9;
-    set r9 into message_count[r0];
-
 function update_profile:
     input r0 as field.public;
     input r1 as field.public;
@@ -77,6 +64,42 @@ finalize update_profile:
     input r2 as field.public;
     cast r1 r2 into r3 as ProfileInfo;
     set r3 into profiles[r0];
+
+function send_donation:
+    input r0 as address.public;
+    input r1 as u64.private;
+    input r2 as field.private;
+    input r3 as u64.public;
+    cast r0 self.caller r0 r1 r2 r3 into r4 as Donation.record;
+    cast self.caller self.caller r0 r1 r2 r3 into r5 as Donation.record;
+    hash.bhp256 r2 into r6 as field;
+    async send_donation r0 self.caller r1 r6 r3 into r7;
+    output r4 as Donation.record;
+    output r5 as Donation.record;
+    output r7 as priv_messenger_leotest_007.aleo/send_donation.future;
+
+finalize send_donation:
+    input r0 as address.public;
+    input r1 as address.public;
+    input r2 as u64.public;
+    input r3 as field.public;
+    input r4 as u64.public;
+    get.or_use donation_count[r0] 0u64 into r5;
+    hash.bhp256 r0 into r6 as field;
+    cast r5 into r7 as field;
+    add r6 r7 into r8;
+    cast r1 r0 r2 r3 r4 into r9 as DonationMeta;
+    set r9 into donation_index[r8];
+    add r5 1u64 into r10;
+    set r10 into donation_count[r0];
+    get.or_use sent_donation_count[r1] 0u64 into r11;
+    hash.bhp256 r1 into r12 as field;
+    cast r11 into r13 as field;
+    add r12 r13 into r14;
+    cast r1 r0 r2 r3 r4 into r15 as DonationMeta;
+    set r15 into sent_donation_index[r14];
+    add r11 1u64 into r16;
+    set r16 into sent_donation_count[r1];
 
 constructor:
     assert.eq edition 0u16;

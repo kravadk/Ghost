@@ -14,10 +14,10 @@ interface UserCache {
 }
 
 const CACHE_KEY = "priv_messenger_tx_cache";
-const CACHE_DURATION = 7 * 24 * 60 * 60 * 1000; // 7 днів
+const CACHE_DURATION = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 export const TxCache = {
-    // Зберегти транзакції
+    // Save transactions
     save(address: string, transactions: CachedTransaction[]): void {
         try {
             const cache = this.getAll();
@@ -32,7 +32,7 @@ export const TxCache = {
         }
     },
 
-    // Отримати транзакції для адреси
+    // Get transactions for address
     get(address: string): CachedTransaction[] {
         try {
             const cache = this.getAll();
@@ -42,7 +42,7 @@ export const TxCache = {
                 return [];
             }
             
-            // Перевірка на застарілість
+            // Check for expiration
             if (Date.now() - userCache.lastUpdated > CACHE_DURATION) {
                 console.log("⏰ Cache expired, clearing...");
                 this.clear(address);
@@ -56,7 +56,7 @@ export const TxCache = {
         }
     },
 
-    // Отримати всі кеші
+    // Get all caches
     getAll(): Record<string, UserCache> {
         try {
             const cached = localStorage.getItem(CACHE_KEY);
@@ -66,7 +66,7 @@ export const TxCache = {
         }
     },
 
-    // Очистити кеш для адреси
+    // Clear cache for address
     clear(address: string): void {
         try {
             const cache = this.getAll();
@@ -78,23 +78,23 @@ export const TxCache = {
         }
     },
 
-    // Додати нові транзакції до існуючих
+    // Append new transactions to existing ones
     append(address: string, newTransactions: CachedTransaction[]): void {
         const existing = this.get(address);
         const combined = [...existing, ...newTransactions];
         
-        // Видалити дублікати по txId
+        // Remove duplicates by txId
         const unique = combined.filter(
             (tx, index, self) => self.findIndex(t => t.txId === tx.txId) === index
         );
         
-        // Сортувати по timestamp (новіші спочатку)
+        // Sort by timestamp (newest first)
         unique.sort((a, b) => b.timestamp - a.timestamp);
         
         this.save(address, unique);
     },
 
-    // Отримати останній час оновлення
+    // Get last update time
     getLastUpdated(address: string): number | null {
         try {
             const cache = this.getAll();
