@@ -4,13 +4,18 @@ import './index.css'
 import App from './App.tsx'
 import ErrorBoundary from './components/ErrorBoundary'
 
+console.log('🚀 Starting app initialization...');
+
 try {
   const rootElement = document.getElementById('root');
   if (!rootElement) {
     throw new Error('Root element not found');
   }
 
+  console.log('✅ Root element found, creating root...');
   const root = createRoot(rootElement);
+  
+  console.log('✅ Root created, rendering app...');
   root.render(
     <StrictMode>
       <ErrorBoundary>
@@ -18,8 +23,9 @@ try {
       </ErrorBoundary>
     </StrictMode>
   );
+  console.log('✅ App rendered successfully');
 } catch (error) {
-  console.error('Failed to render app:', error);
+  console.error('❌ Failed to render app:', error);
   const rootElement = document.getElementById('root');
   if (rootElement) {
     rootElement.innerHTML = `
