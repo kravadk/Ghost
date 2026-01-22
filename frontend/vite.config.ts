@@ -13,6 +13,15 @@ export default defineConfig({
   optimizeDeps: {
     exclude: ['@provablehq/wasm'],
   },
+  build: {
+    sourcemap: false,
+    minify: 'esbuild',
+    rollupOptions: {
+      output: {
+        manualChunks: undefined,
+      },
+    },
+  },
   server: {
     proxy: {
       '/provable': {
