@@ -10,8 +10,8 @@ program priv_messenger_leotest_008.aleo {
         bio_hash: field,     // Hashed bio for privacy
     }
 
-    // Donation record (private)
-    record Donation {
+    // Message record (private, encrypted)
+    record Message {
         public owner: address,
         sender: address,
         recipient: address,
@@ -20,8 +20,8 @@ program priv_messenger_leotest_008.aleo {
         timestamp: u64,
     }
 
-    // Donation metadata for indexing (public, privacy-preserving)
-    struct DonationMeta {
+    // Message metadata for indexing (public, privacy-preserving)
+    struct MessageMeta {
         sender_hash: field,      // Hashed sender address for privacy
         recipient_hash: field,    // Hashed recipient address for privacy
         amount: u64,
@@ -32,17 +32,17 @@ program priv_messenger_leotest_008.aleo {
     // Profiles mapping
     mapping profiles: address => ProfileInfo;
 
-    // Count of donations per recipient
-    mapping donation_count: address => u64;
+    // Count of messages per recipient
+    mapping message_count: address => u64;
 
-    // Donation index: key = hash(recipient, index) => DonationMeta
-    mapping donation_index: field => DonationMeta;
+    // Message index: key = hash(recipient, index) => MessageMeta
+    mapping message_index: field => MessageMeta;
 
-    // Count of sent donations per sender
-    mapping sent_donation_count: address => u64;
+    // Count of sent messages per sender
+    mapping sent_message_count: address => u64;
 
-    // Sent donation index: key = hash(sender, index) => DonationMeta
-    mapping sent_donation_index: field => DonationMeta;
+    // Sent message index: key = hash(sender, index) => MessageMeta
+    mapping sent_message_index: field => MessageMeta;
 
     // Contact name mapping: key = hash(user, contact_address) => contact_name
     mapping contact_names: field => field;
@@ -84,19 +84,19 @@ program priv_messenger_leotest_008.aleo {
         Mapping::set(profiles, user, info);
     }
 
-    // Send donation with encryption
+    // Send message with encryption
     // recipient is private for maximum privacy
     // Public mappings use hashed addresses to preserve anonymity
-    async transition send_donation(
+    async transition send_message(
         private recipient: address,
         private amount: u64,
         private message: field,
         private timestamp: u64
-    ) -> (Donation, Donation, Future) {
+    ) -> (Message, Message, Future) {
         let sender: address = self.caller;
         
-        // Create recipient donation record (owned by recipient)
-        let recipient_donation: Donation = Donation {
+        // Create recipient message record (owned by recipient)
+        let recipient_message: Message = Message {
             owner: recipient,
             sender: sender,
             recipient: recipient,
@@ -105,8 +105,8 @@ program priv_messenger_leotest_008.aleo {
             timestamp: timestamp,
         };
 
-        // Create sender donation record (owned by sender)
-        let sender_donation: Donation = Donation {
+        // Create sender message record (owned by sender)
+        let sender_message: Message = Message {
             owner: sender,
             sender: sender,
             recipient: recipient,
@@ -119,10 +119,10 @@ program priv_messenger_leotest_008.aleo {
         let message_hash: field = BHP256::hash_to_field(message);
         
         // Pass metadata to finalize for indexing
-        return (recipient_donation, sender_donation, finalize_send_donation(recipient, sender, amount, message_hash, timestamp));
+        return (recipient_message, sender_message, finalize_send_message(recipient, sender, amount, message_hash, timestamp));
     }
 
-    async function finalize_send_donation(
+    async function finalize_send_message(
         recipient: address,
         sender: address,
         amount: u64,
@@ -131,43 +131,39 @@ program priv_messenger_leotest_008.aleo {
     ) {
         // Use passed timestamp logic
 
-        // Index for recipient (received donations)
-        let recipient_count: u64 = Mapping::get_or_use(donation_count, recipient, 0u64);
+        // Hash addresses for privacy in public mappings
+        let sender_hash: field = BHP256::hash_to_field(sender);
+        let recipient_hash: field = BHP256::hash_to_field(recipient);
+        
+        // Index for recipient (received messages)
+        let recipient_count: u64 = Mapping::get_or_use(message_count, recipient, 0u64);
         let recipient_field: field = BHP256::hash_to_field(recipient);
         let recipient_index_key: field = recipient_field + (recipient_count as field);
         
-        // Hash addresses for privacy in public mappings
-        let sender_hash: field = BHP256::hash_to_field(sender);
-        let recipient_hash: field = BHP256::hash_to_field(recipient);
-        
-        let recipient_meta: DonationMeta = DonationMeta {
+        let recipient_meta: MessageMeta = MessageMeta {
             sender_hash: sender_hash,
             recipient_hash: recipient_hash,
             amount: amount,
             message_hash: message_hash,
             timestamp: timestamp,
         };
-        Mapping::set(donation_index, recipient_index_key, recipient_meta);
-        Mapping::set(donation_count, recipient, recipient_count + 1u64);
+        Mapping::set(message_index, recipient_index_key, recipient_meta);
+        Mapping::set(message_count, recipient, recipient_count + 1u64);
 
-        // Index for sender (sent donations)
-        let sender_count: u64 = Mapping::get_or_use(sent_donation_count, sender, 0u64);
+        // Index for sender (sent messages)
+        let sender_count: u64 = Mapping::get_or_use(sent_message_count, sender, 0u64);
         let sender_field: field = BHP256::hash_to_field(sender);
         let sender_index_key: field = sender_field + (sender_count as field);
         
-        // Hash addresses for privacy in public mappings
-        let sender_hash: field = BHP256::hash_to_field(sender);
-        let recipient_hash: field = BHP256::hash_to_field(recipient);
-        
-        let sender_meta: DonationMeta = DonationMeta {
+        let sender_meta: MessageMeta = MessageMeta {
             sender_hash: sender_hash,
             recipient_hash: recipient_hash,
             amount: amount,
             message_hash: message_hash,
             timestamp: timestamp,
         };
-        Mapping::set(sent_donation_index, sender_index_key, sender_meta);
-        Mapping::set(sent_donation_count, sender, sender_count + 1u64);
+        Mapping::set(sent_message_index, sender_index_key, sender_meta);
+        Mapping::set(sent_message_count, sender, sender_count + 1u64);
     }
 
     // Update contact name (local to user, privacy-preserving)

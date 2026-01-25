@@ -512,15 +512,15 @@ const ChatInterface: React.FC = () => {
       const timestamp = Date.now();
       const amount = 0; // Amount is 0 for messages
 
-      // Create transaction for send_donation
+      // Create transaction for send_message
       // Based on deployed program priv_messenger_leotest_008.aleo
-      // send_donation(private recipient: address, private amount: u64, private message: field, private timestamp: u64)
+      // send_message(private recipient: address, private amount: u64, private message: field, private timestamp: u64)
       // All parameters are private for maximum privacy - nothing visible in transaction history
       const transaction = Transaction.createTransaction(
         publicKey,
         network,
         PROGRAM_ID,
-        "send_donation",
+        "send_message",
         [
           activeContact.address,           // private recipient: address
           `${amount}u64`,                   // private amount: u64
