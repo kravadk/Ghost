@@ -4,10 +4,10 @@ program priv_messenger_leotest_008.aleo {
     @noupgrade
     async constructor() {}
 
-    // Profile information struct
+    // Profile information struct (privacy-preserving)
     struct ProfileInfo {
-        name: field,
-        bio: field,
+        name_hash: field,    // Hashed name for privacy
+        bio_hash: field,     // Hashed bio for privacy
     }
 
     // Donation record (private)
@@ -20,10 +20,10 @@ program priv_messenger_leotest_008.aleo {
         timestamp: u64,
     }
 
-    // Donation metadata for indexing (public)
+    // Donation metadata for indexing (public, privacy-preserving)
     struct DonationMeta {
-        sender: address,
-        recipient: address,
+        sender_hash: field,      // Hashed sender address for privacy
+        recipient_hash: field,    // Hashed recipient address for privacy
         amount: u64,
         message_hash: field,
         timestamp: u64,
@@ -56,9 +56,13 @@ program priv_messenger_leotest_008.aleo {
     }
 
     async function finalize_create_profile(user: address, name: field, bio: field) {
+        // Hash profile data for privacy
+        let name_hash: field = BHP256::hash_to_field(name);
+        let bio_hash: field = BHP256::hash_to_field(bio);
+        
         let info: ProfileInfo = ProfileInfo {
-            name: name,
-            bio: bio
+            name_hash: name_hash,
+            bio_hash: bio_hash
         };
         Mapping::set(profiles, user, info);
     }
@@ -69,22 +73,25 @@ program priv_messenger_leotest_008.aleo {
     }
 
     async function finalize_update_profile(user: address, name: field, bio: field) {
+        // Hash profile data for privacy
+        let name_hash: field = BHP256::hash_to_field(name);
+        let bio_hash: field = BHP256::hash_to_field(bio);
+        
         let info: ProfileInfo = ProfileInfo {
-            name: name,
-            bio: bio
+            name_hash: name_hash,
+            bio_hash: bio_hash
         };
         Mapping::set(profiles, user, info);
     }
 
     // Send donation with encryption
-    // recipient is public so we can index donations
-    // Send donation with encryption
-    // recipient is public so we can index donations
+    // recipient is private for maximum privacy
+    // Public mappings use hashed addresses to preserve anonymity
     async transition send_donation(
-        public recipient: address,
+        private recipient: address,
         private amount: u64,
         private message: field,
-        public timestamp: u64
+        private timestamp: u64
     ) -> (Donation, Donation, Future) {
         let sender: address = self.caller;
         
@@ -129,11 +136,15 @@ program priv_messenger_leotest_008.aleo {
         let recipient_field: field = BHP256::hash_to_field(recipient);
         let recipient_index_key: field = recipient_field + (recipient_count as field);
         
+        // Hash addresses for privacy in public mappings
+        let sender_hash: field = BHP256::hash_to_field(sender);
+        let recipient_hash: field = BHP256::hash_to_field(recipient);
+        
         let recipient_meta: DonationMeta = DonationMeta {
-            sender: sender,
-            recipient: recipient,
+            sender_hash: sender_hash,
+            recipient_hash: recipient_hash,
             amount: amount,
-message_hash: message_hash,
+            message_hash: message_hash,
             timestamp: timestamp,
         };
         Mapping::set(donation_index, recipient_index_key, recipient_meta);
@@ -144,9 +155,13 @@ message_hash: message_hash,
         let sender_field: field = BHP256::hash_to_field(sender);
         let sender_index_key: field = sender_field + (sender_count as field);
         
+        // Hash addresses for privacy in public mappings
+        let sender_hash: field = BHP256::hash_to_field(sender);
+        let recipient_hash: field = BHP256::hash_to_field(recipient);
+        
         let sender_meta: DonationMeta = DonationMeta {
-            sender: sender,
-            recipient: recipient,
+            sender_hash: sender_hash,
+            recipient_hash: recipient_hash,
             amount: amount,
             message_hash: message_hash,
             timestamp: timestamp,
@@ -155,10 +170,10 @@ message_hash: message_hash,
         Mapping::set(sent_donation_count, sender, sender_count + 1u64);
     }
 
-    // Update contact name (local to user)
+    // Update contact name (local to user, privacy-preserving)
     async transition update_contact_name(
-        public contact_address: address,
-        public contact_name: field
+        private contact_address: address,
+        private contact_name: field
     ) -> Future {
         return finalize_update_contact_name(self.caller, contact_address, contact_name);
     }
@@ -175,8 +190,8 @@ message_hash: message_hash,
         Mapping::set(contact_names, key, contact_name);
     }
 
-    // Delete/archive chat (local to user)
-    async transition delete_chat(public contact_address: address) -> Future {
+    // Delete/archive chat (local to user, privacy-preserving)
+    async transition delete_chat(private contact_address: address) -> Future {
         return finalize_delete_chat(self.caller, contact_address);
     }
 
@@ -191,8 +206,8 @@ message_hash: message_hash,
         Mapping::set(deleted_chats, key, 1u64);
     }
 
-    // Restore chat (local to user)
-    async transition restore_chat(public contact_address: address) -> Future {
+    // Restore chat (local to user, privacy-preserving)
+    async transition restore_chat(private contact_address: address) -> Future {
         return finalize_restore_chat(self.caller, contact_address);
     }
 

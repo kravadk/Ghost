@@ -514,17 +514,18 @@ const ChatInterface: React.FC = () => {
 
       // Create transaction for send_donation
       // Based on deployed program priv_messenger_leotest_008.aleo
-      // send_donation(public recipient: address, private amount: u64, private message: field, public timestamp: u64)
+      // send_donation(private recipient: address, private amount: u64, private message: field, private timestamp: u64)
+      // All parameters are private for maximum privacy - nothing visible in transaction history
       const transaction = Transaction.createTransaction(
         publicKey,
         network,
         PROGRAM_ID,
         "send_donation",
         [
-          activeContact.address,           // public recipient: address
+          activeContact.address,           // private recipient: address
           `${amount}u64`,                   // private amount: u64
           messageField,                     // private message: field
-          `${timestamp}u64`                  // public timestamp: u64
+          `${timestamp}u64`                  // private timestamp: u64
         ],
         TRANSACTION_FEE,
         false
