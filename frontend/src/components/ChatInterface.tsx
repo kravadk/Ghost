@@ -425,171 +425,44 @@ const ChatInterface: React.FC = () => {
     ));
   };
 
-  // Update contact name through blockchain (with fallback to local storage)
+  // Update contact name locally (in memory and localStorage)
   const handleUpdateContactName = async (contactId: string, newName: string) => {
-    if (!publicKey || !adapter || !contactId || !newName.trim()) return;
+    if (!publicKey || !contactId || !newName.trim()) return;
 
     const contact = contacts.find(c => c.id === contactId);
-    if (!contact?.address) {
-      alert('Contact address is required');
+    if (!contact) {
       return;
     }
 
-    setIsSending(true);
-    setTxStatus('Updating contact name on blockchain...');
-
-    try {
-      const contactAddress = contact.address;
-      const nameField = stringToField(newName.trim());
-
-      const tx = Transaction.createTransaction(
-        publicKey,
-        WalletAdapterNetwork.TestnetBeta,
-        PROGRAM_ID,
-        'update_contact_name',
-        [contactAddress, nameField],
-        TRANSACTION_FEE
-      );
-
-      const signed = await adapter.requestTransaction(tx);
-      
-      if (signed) {
-        // Update locally after successful transaction
-        setContacts(prev => prev.map(c => 
-          c.id === contactId ? { ...c, name: newName.trim() } : c
-        ));
-        setTxStatus('Contact name updated successfully!');
-        setTimeout(() => setTxStatus(''), 3000);
-      }
-    } catch (error: any) {
-      console.error("Update contact name error:", error);
-      const errorMsg = error?.message || String(error);
-      
-      // Check for specific errors
-      if (errorMsg.includes('Not enough balance') || errorMsg.includes('insufficient')) {
-        // Fallback to local storage if no balance
-        setContacts(prev => prev.map(c => 
-          c.id === contactId ? { ...c, name: newName.trim() } : c
-        ));
-        setTxStatus('Updated locally (insufficient balance for blockchain)');
-        setTimeout(() => setTxStatus(''), 3000);
-      } else if (errorMsg.includes('does not exist') || errorMsg.includes('INVALID_PARAMS')) {
-        // Function doesn't exist in contract - use local storage
-        setContacts(prev => prev.map(c => 
-          c.id === contactId ? { ...c, name: newName.trim() } : c
-        ));
-        setTxStatus('Updated locally (contract function not available)');
-        setTimeout(() => setTxStatus(''), 3000);
-      } else {
-        // Other errors - still update locally as fallback
-        setContacts(prev => prev.map(c => 
-          c.id === contactId ? { ...c, name: newName.trim() } : c
-        ));
-        setTxStatus(`Updated locally (${errorMsg.substring(0, 30)}...)`);
-        setTimeout(() => setTxStatus(''), 5000);
-      }
-    } finally {
-      setIsSending(false);
-    }
+    // Update locally only (no blockchain call)
+    setContacts(prev => prev.map(c => 
+      c.id === contactId ? { ...c, name: newName.trim() } : c
+    ));
+    
+    // Update will be saved to localStorage automatically via useEffect
+    setTxStatus('Contact name updated!');
+    setTimeout(() => setTxStatus(''), 2000);
   };
 
-  // Delete chat through blockchain (with fallback to local storage)
+  // Delete chat locally (in memory and localStorage)
   const handleDeleteChat = async (contactId: string) => {
-    if (!publicKey || !adapter || !contactId) return;
+    if (!publicKey || !contactId) return;
 
-    const contact = contacts.find(c => c.id === contactId);
-    if (!contact?.address) {
-      alert('Contact address is required');
-      return;
+    // Delete locally only (no blockchain call)
+    setContacts(prev => prev.filter(c => c.id !== contactId));
+    setHistories(prev => {
+      const updated = { ...prev };
+      delete updated[contactId];
+      return updated;
+    });
+    
+    if (activeContactId === contactId) {
+      setActiveContactId(null);
     }
-
-    setIsSending(true);
-    setTxStatus('Deleting chat on blockchain...');
-
-    try {
-      const contactAddress = contact.address;
-
-      const tx = Transaction.createTransaction(
-        publicKey,
-        WalletAdapterNetwork.TestnetBeta,
-        PROGRAM_ID,
-        'delete_chat',
-        [contactAddress],
-        TRANSACTION_FEE
-      );
-
-      const signed = await adapter.requestTransaction(tx);
-      
-      if (signed) {
-        // Delete locally after successful transaction
-        setContacts(prev => prev.filter(c => c.id !== contactId));
-        setHistories(prev => {
-          const updated = { ...prev };
-          delete updated[contactId];
-          return updated;
-        });
-        
-        if (activeContactId === contactId) {
-          setActiveContactId(null);
-        }
-        
-        setTxStatus('Chat deleted successfully!');
-        setTimeout(() => setTxStatus(''), 3000);
-      }
-    } catch (error: any) {
-      console.error("Delete chat error:", error);
-      const errorMsg = error?.message || String(error);
-      
-      // Check for specific errors
-      if (errorMsg.includes('Not enough balance') || errorMsg.includes('insufficient')) {
-        // Fallback to local deletion if no balance
-        setContacts(prev => prev.filter(c => c.id !== contactId));
-        setHistories(prev => {
-          const updated = { ...prev };
-          delete updated[contactId];
-          return updated;
-        });
-        
-        if (activeContactId === contactId) {
-          setActiveContactId(null);
-        }
-        
-        setTxStatus('Deleted locally (insufficient balance for blockchain)');
-        setTimeout(() => setTxStatus(''), 3000);
-      } else if (errorMsg.includes('does not exist') || errorMsg.includes('INVALID_PARAMS')) {
-        // Function doesn't exist in contract - use local deletion
-        setContacts(prev => prev.filter(c => c.id !== contactId));
-        setHistories(prev => {
-          const updated = { ...prev };
-          delete updated[contactId];
-          return updated;
-        });
-        
-        if (activeContactId === contactId) {
-          setActiveContactId(null);
-        }
-        
-        setTxStatus('Deleted locally (contract function not available)');
-        setTimeout(() => setTxStatus(''), 3000);
-      } else {
-        // Other errors - still delete locally as fallback
-        setContacts(prev => prev.filter(c => c.id !== contactId));
-        setHistories(prev => {
-          const updated = { ...prev };
-          delete updated[contactId];
-          return updated;
-        });
-        
-        if (activeContactId === contactId) {
-          setActiveContactId(null);
-        }
-        
-        setTxStatus(`Deleted locally (${errorMsg.substring(0, 30)}...)`);
-        setTimeout(() => setTxStatus(''), 5000);
-      }
-    } finally {
-      setIsSending(false);
-    }
+    
+    // Changes will be saved to localStorage automatically via useEffect
+    setTxStatus('Chat deleted!');
+    setTimeout(() => setTxStatus(''), 2000);
   };
 
   const handleSend = async (e?: React.FormEvent) => {
