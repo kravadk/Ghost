@@ -667,20 +667,27 @@ const ChatInterface: React.FC = () => {
         throw new Error("Invalid timestamp format");
       }
       
-      const transaction = Transaction.createTransaction(
-        publicKey,
-        network,
-        PROGRAM_ID,
-        "send_message",
-        [
-          recipientParam,    // private recipient: address
-          amountParam,       // private amount: u64 (ALWAYS 0 - no token transfer)
-          messageParam,      // private message: field
-          timestampParam      // private timestamp: u64
-        ],
-        TRANSACTION_FEE,     // Only blockchain transaction fee (0.01 ALEO = 10,000,000,000 microcredits)
-        false                // Use public fee (not private records) - feePrivate: false
-      );
+      // Create transaction object directly (like tipzo) to ensure proper fee display
+      // Fee is in microcredits: 10,000,000,000 = 0.01 ALEO
+      // Wallet should display this as 0.01 ALEO, not 10000
+      const transaction = {
+        address: String(publicKey),
+        chainId: network,
+        fee: TRANSACTION_FEE, // 10,000,000,000 microcredits = 0.01 ALEO
+        feePrivate: false, // Use public fee (not private records)
+        transitions: [
+          {
+            program: String(PROGRAM_ID),
+            functionName: "send_message",
+            inputs: [
+              recipientParam,    // private recipient: address
+              amountParam,       // private amount: u64 (ALWAYS 0 - no token transfer)
+              messageParam,      // private message: field
+              timestampParam      // private timestamp: u64
+            ]
+          }
+        ]
+      };
 
       setTxStatus('Waiting for signature...');
       
