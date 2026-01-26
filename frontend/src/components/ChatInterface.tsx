@@ -802,10 +802,11 @@ const ChatInterface: React.FC = () => {
         setTimeout(() => setTxStatus(''), 8000);
         return;
       } else if (errorMsg.includes("INVALID_PARAMS") && !errorStr.includes("addToWindow")) {
-        setTxStatus(`ERROR: Program ${PROGRAM_ID} not found. Transaction cannot be broadcasted.`);
-        console.error("INVALID_PARAMS: Program not found on network. Transaction was not broadcasted.");
-        console.error("This means tokens were deducted but transaction never reached the blockchain.");
-        console.error("Solution: Deploy program: leo deploy --network testnet");
+        setTxStatus(`⚠️ Program ${PROGRAM_ID} not indexed on RPC. Wait 5-10 min or check AleoScan.`);
+        console.error("INVALID_PARAMS: Program may exist but not indexed on wallet's RPC endpoints.");
+        console.error("This usually means the program was recently deployed and needs time to index.");
+        console.error("Check if program exists: https://testnet.aleoscan.io/program/" + PROGRAM_ID);
+        console.error("If program exists on AleoScan but wallet shows error, wait for RPC indexing.");
       } else if (errorMsg.includes("does not exist") || errorStr.includes("does not exist")) {
         setTxStatus(`Error: send_message function not found in ${PROGRAM_ID}.`);
       } else if (errorMsg.includes("insufficient") || errorMsg.includes("balance")) {
