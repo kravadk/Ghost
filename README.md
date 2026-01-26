@@ -11,7 +11,7 @@ This project consists of a smart contract written in Leo and a React-based front
 - **Private Messaging**: Send encrypted messages to any Aleo address
 - **Profile Management**: Create and update user profiles with name and bio
 - **Message Sync**: Automatically sync messages from the blockchain
-- **Wallet Integration**: Supports Leo Wallet and Puzzle Wallet
+- **Wallet Integration**: Supports Leo Wallet
 - **Transaction History**: Track sent messages with transaction status
 - **Blockchain Indexing**: Fast message retrieval using on-chain mappings
 
@@ -28,7 +28,7 @@ The Aleo program provides:
 ### Frontend (`frontend/`)
 
 A React + TypeScript application that:
-- Connects to Aleo wallets (Leo Wallet, Puzzle Wallet)
+- Connects to Aleo wallets (Leo Wallet)
 - Handles message encryption/decryption
 - Syncs messages from blockchain records
 - Provides a user-friendly messaging interface
@@ -37,7 +37,7 @@ A React + TypeScript application that:
 
 - Node.js 18+ and npm
 - Leo CLI (for contract compilation)
-- Aleo wallet (Leo Wallet or Puzzle Wallet)
+- Aleo wallet (Leo Wallet)
 
 ## Installation
 

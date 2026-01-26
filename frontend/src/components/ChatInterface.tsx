@@ -507,7 +507,7 @@ const ChatInterface: React.FC = () => {
     }
 
     setIsSending(true);
-    setTxStatus('Preparing transaction...');
+    setTxStatus('Підготовка транзакції...');
 
     const userMsg: Message = {
       id: Date.now().toString(),
@@ -536,15 +536,74 @@ const ChatInterface: React.FC = () => {
     try {
       // Validate inputs before creating transaction
       if (!activeContact.address || !isValidAleoAddress(activeContact.address)) {
-        setTxStatus("Error: Invalid recipient address");
+        setTxStatus("❌ Помилка: Невалідна адреса отримувача");
         setTimeout(() => setTxStatus(''), 5000);
+        setIsSending(false);
+        // Remove optimistic message
+        setHistories(prev => ({
+          ...prev,
+          [currentChatId]: (prev[currentChatId] || []).filter(m => m.id !== userMsg.id)
+        }));
         return;
       }
       
       if (!messageText || messageText.trim().length === 0) {
-        setTxStatus("Error: Message cannot be empty");
+        setTxStatus("❌ Помилка: Повідомлення не може бути порожнім");
         setTimeout(() => setTxStatus(''), 5000);
+        setIsSending(false);
+        // Remove optimistic message
+        setHistories(prev => ({
+          ...prev,
+          [currentChatId]: (prev[currentChatId] || []).filter(m => m.id !== userMsg.id)
+        }));
         return;
+      }
+
+      // Check balance before sending (if adapter supports it)
+      setTxStatus('Перевірка балансу...');
+      try {
+        if (adapter.requestBalance && typeof adapter.requestBalance === 'function') {
+          const balance = await adapter.requestBalance();
+          console.log("💰 Current balance:", balance);
+          
+          // Balance might be in different formats, check if it's sufficient
+          // TRANSACTION_FEE = 10,000,000,000 microcredits = 0.01 ALEO
+          const minRequired = TRANSACTION_FEE;
+          
+          if (balance !== undefined && balance !== null) {
+            const balanceNum = typeof balance === 'string' 
+              ? parseFloat(balance.replace(/[^\d.]/g, '')) 
+              : Number(balance);
+            
+            // If balance is in ALEO (not microcredits), convert
+            const balanceMicrocredits = balanceNum < 1 
+              ? Math.floor(balanceNum * 1_000_000_000_000) 
+              : balanceNum;
+            
+            if (balanceMicrocredits < minRequired) {
+              const requiredAleo = (minRequired / 1_000_000_000_000).toFixed(4);
+              const currentAleo = (balanceMicrocredits / 1_000_000_000_000).toFixed(4);
+              setTxStatus(`❌ Недостатньо коштів! Потрібно: ${requiredAleo} ALEO, є: ${currentAleo} ALEO`);
+              console.error("❌ Insufficient balance:", {
+                required: minRequired,
+                current: balanceMicrocredits,
+                requiredAleo,
+                currentAleo
+              });
+              setIsSending(false);
+              // Remove optimistic message
+              setHistories(prev => ({
+                ...prev,
+                [currentChatId]: (prev[currentChatId] || []).filter(m => m.id !== userMsg.id)
+              }));
+              setTimeout(() => setTxStatus(''), 8000);
+              return;
+            }
+          }
+        }
+      } catch (balanceError) {
+        console.warn("Could not check balance:", balanceError);
+        // Continue anyway - balance check is optional
       }
       
       // Convert message to field
@@ -584,7 +643,7 @@ const ChatInterface: React.FC = () => {
       // SECURITY: amount is always 0 - no tokens are transferred, only blockchain fee is charged
       // send_message(private recipient: address, private amount: u64, private message: field, private timestamp: u64)
       // All parameters are private for maximum privacy - nothing visible in transaction history
-      // TRANSACTION_FEE (0.05 ALEO) is the ONLY fee charged - this is the blockchain transaction fee
+      // TRANSACTION_FEE (0.01 ALEO) is the ONLY fee charged - this is the blockchain transaction fee
       
       // Ensure all parameters are strings with proper type annotations
       const recipientParam = activeContact.address; // address type
@@ -610,11 +669,11 @@ const ChatInterface: React.FC = () => {
           messageParam,      // private message: field
           timestampParam      // private timestamp: u64
         ],
-        TRANSACTION_FEE,     // Only blockchain transaction fee (0.05 ALEO)
+        TRANSACTION_FEE,     // Only blockchain transaction fee (0.01 ALEO)
         false                // Use public fee (not private records) - feePrivate: false
       );
 
-      setTxStatus('Waiting for signature...');
+      setTxStatus('Очікування підпису...');
       console.log("Creating transaction with params:", {
         recipient: activeContact.address,
         amount: `${amount}u64`,
@@ -632,13 +691,50 @@ const ChatInterface: React.FC = () => {
       console.log("Transaction feePrivate:", transaction.feePrivate);
       
       // IMPORTANT: Verify program exists before sending transaction
-      console.log("🔍 Verifying program exists before sending transaction...");
+      console.log("🔍 Перевірка програми перед відправкою транзакції...");
       console.log("   Program ID:", PROGRAM_ID);
       console.log("   Network:", network);
       
+      // Try to verify program exists (optional check)
+      setTxStatus('Перевірка програми в мережі...');
+      let programExists = false;
+      try {
+        const programCheckUrls = [
+          `https://api.explorer.aleo.org/v1/testnet3/program/${PROGRAM_ID}`,
+          `https://vm.aleo.org/api/testnet3/program/${PROGRAM_ID}`
+        ];
+        
+        for (const url of programCheckUrls) {
+          try {
+            const response = await fetch(url);
+            if (response.ok) {
+              programExists = true;
+              console.log("✅ Програма знайдена в мережі:", url);
+              break;
+            }
+          } catch (e) {
+            // Try next URL
+            continue;
+          }
+        }
+        
+        if (!programExists) {
+          console.warn("⚠️ Програма не знайдена в мережі!");
+          console.warn("⚠️ Транзакція може не пройти!");
+          console.warn("💡 Перевірте деплой: node verify_deployment.js");
+          setTxStatus('⚠️ Програма не знайдена в мережі. Транзакція може не пройти!');
+          // Don't block - continue anyway, wallet will handle it
+        } else {
+          console.log("✅ Програма існує в мережі");
+        }
+      } catch (e) {
+        console.warn("Could not verify program:", e);
+        // Continue anyway
+      }
+      
       // Request transaction - this should prompt user to sign and broadcast
       // IMPORTANT: User must approve the transaction in the wallet popup
-      setTxStatus('⏳ Opening wallet... Please approve the transaction to send your message.');
+      setTxStatus('⏳ Відкриття гаманця... Будь ласка, підтвердіть транзакцію для відправки повідомлення.');
       
       let txId: any;
       try {
@@ -662,21 +758,22 @@ const ChatInterface: React.FC = () => {
         
         // Handle different response formats
         if (txId === null || txId === undefined) {
-          throw new Error("Transaction was cancelled or failed - no transaction ID returned");
+          throw new Error("Транзакцію було скасовано або вона не вдалася - не повернено ID транзакції");
         }
         
         // Log full response for debugging
         if (typeof txId === 'object') {
-          console.log("Full transaction response object:", JSON.stringify(txId, null, 2));
+          console.log("📦 Повний об'єкт відповіді транзакції:", JSON.stringify(txId, null, 2));
         } else {
-          console.log("Transaction ID (string):", txId);
+          console.log("📦 ID транзакції (рядок):", txId);
         }
       } catch (txError: any) {
-        console.error("❌ Transaction request failed:", txError);
+        console.error("❌ Помилка запиту транзакції:", txError);
         // Check if it's a user cancellation
         if (txError?.message?.includes("cancel") || txError?.message?.includes("reject") || 
-            txError?.message?.includes("denied") || txError?.code === 4001) {
-          setTxStatus("❌ Transaction cancelled by user");
+            txError?.message?.includes("denied") || txError?.message?.includes("скасовано") ||
+            txError?.code === 4001) {
+          setTxStatus("❌ Транзакцію скасовано користувачем");
           throw new Error("Transaction cancelled");
         }
         throw txError; // Re-throw to be caught by outer catch
@@ -693,35 +790,36 @@ const ChatInterface: React.FC = () => {
           const isRealTxId = actualTxId.startsWith('at1');
           
           if (isRealTxId) {
-            setTxStatus(`✅ Transaction submitted! ID: ${shortId}...`);
-            console.log("✅ Real blockchain transaction ID received:", actualTxId);
-            console.log("✅ Transaction was successfully broadcasted to the network!");
+            setTxStatus(`✅ Транзакцію відправлено! ID: ${shortId}...`);
+            console.log("✅ Отримано реальний ID транзакції блокчейну:", actualTxId);
+            console.log("✅ Транзакцію успішно відправлено в мережу!");
           } else {
             // UUID format means it's a local wallet ID, not a real transaction ID
-            setTxStatus(`⚠️ Transaction may not be broadcasted. Check wallet history!`);
+            setTxStatus(`⚠️ Транзакція може не бути відправлена. Перевірте історію гаманця!`);
             console.log("");
-            console.log("⚠️⚠️⚠️ КРИТИЧНО: Получен UUID (локальный ID), НЕ реальный transaction ID!");
-            console.log("⚠️ UUID формат означает, что транзакция НЕ была отправлена в сеть!");
+            console.log("⚠️⚠️⚠️ КРИТИЧНО: Отримано UUID (локальний ID), НЕ реальний transaction ID!");
+            console.log("⚠️ Формат UUID означає, що транзакція НЕ була відправлена в мережу!");
             console.log("");
-            console.log("🔍 КАК ПРОВЕРИТЬ:");
-            console.log("   1. Откройте Leo Wallet расширение");
-            console.log("   2. Перейдите в 'Transactions' или 'History'");
-            console.log("   3. Найдите транзакцию к программе:", PROGRAM_ID);
-            console.log("   4. ⚠️ Если транзакции НЕТ в истории - она НЕ была отправлена!");
-            console.log("   5. ✅ Если транзакция ЕСТЬ - скопируйте РЕАЛЬНЫЙ ID (начинается с 'at1...')");
-            console.log("   6. Проверьте в AleoScan:");
+            console.log("🔍 ЯК ПЕРЕВІРИТИ:");
+            console.log("   1. Відкрийте розширення Leo Wallet");
+            console.log("   2. Перейдіть в 'Transactions' або 'History'");
+            console.log("   3. Знайдіть транзакцію до програми:", PROGRAM_ID);
+            console.log("   4. ⚠️ Якщо транзакції НЕМАЄ в історії - вона НЕ була відправлена!");
+            console.log("   5. ✅ Якщо транзакція Є - скопіюйте РЕАЛЬНИЙ ID (починається з 'at1...')");
+            console.log("   6. Перевірте в AleoScan:");
             console.log("      https://testnet.aleoscan.io/address?a=" + publicKey + "#transitions");
             console.log("");
-            console.log("❓ ПОЧЕМУ ТРАНЗАКЦИЯ НЕ ОТПРАВЛЯЕТСЯ:");
-            console.log("   ⚠️ Программа не найдена в сети!");
-            console.log("   ⚠️ Проверьте деплой: node verify_deployment.js");
-            console.log("   ⚠️ Если программа не найдена - задеплойте:");
+            console.log("❓ ЧОМУ ТРАНЗАКЦІЯ НЕ ВІДПРАВЛЯЄТЬСЯ:");
+            console.log("   ⚠️ Програма не знайдена в мережі!");
+            console.log("   ⚠️ Перевірте деплой: node verify_deployment.js");
+            console.log("   ⚠️ Якщо програма не знайдена - задеплойте:");
             console.log("      leo deploy --network testnet --priority-fees 1000000 --broadcast -y");
             console.log("");
-            console.log("💡 Другие возможные причины:");
-            console.log("   - Функция не найдена в программе");
-            console.log("   - Неправильные параметры");
-            console.log("   - Недостаточно средств");
+            console.log("💡 Інші можливі причини:");
+            console.log("   - Функція не знайдена в програмі");
+            console.log("   - Неправильні параметри");
+            console.log("   - Недостатньо коштів (потрібно мінімум 0.01 ALEO для комісії)");
+            console.log("   - Проблеми з мережею");
           }
           
           // Show success message in UI with AleoScan link
@@ -731,32 +829,42 @@ const ChatInterface: React.FC = () => {
           console.log("📋 Transaction details:");
           console.log("   Program:", PROGRAM_ID);
           console.log("   Function: send_message");
-          console.log("   Fee:", TRANSACTION_FEE, "microcredits (0.05 ALEO)");
+          console.log("   Fee:", TRANSACTION_FEE, "microcredits (0.01 ALEO)");
           
           if (!isRealTxId) {
             console.log("");
-            console.log("⚠️⚠️⚠️ КРИТИЧНО: Транзакция НЕ отправлена в сеть!");
-            console.log("⚠️ UUID означает, что кошелек создал транзакцию локально, но не отправил её.");
-            console.log("⚠️ Это происходит, когда программа не найдена в сети.");
+            console.log("⚠️⚠️⚠️ КРИТИЧНО: Транзакцію НЕ відправлено в мережу!");
+            console.log("⚠️ UUID означає, що гаманець створив транзакцію локально, але не відправив її.");
+            console.log("⚠️ Це відбувається, коли програма не знайдена в мережі.");
             console.log("");
-            console.log("🔧 РЕШЕНИЕ:");
-            console.log("   1. Программа может быть еще не проиндексирована (подождите 1-2 минуты)");
-            console.log("   2. Проверьте деплой транзакцию:");
-            console.log("      https://testnet.aleoscan.io/transaction?id=at1vjzscjg9t75zfdg2kmrn4veegurqt6heca2988ckt2j4xns80cqq9lkn23");
-            console.log("   3. Проверьте историю транзакций в Leo Wallet");
-            console.log("   4. Если транзакции нет в истории - она не была отправлена");
-            console.log("   5. Попробуйте отправить сообщение через 1-2 минуты после деплоя");
+            console.log("🔧 РІШЕННЯ:");
+            console.log("   1. Програма може бути ще не проіндексована (зачекайте 1-2 хвилини)");
+            console.log("   2. Перевірте деплой транзакції:");
+            console.log("      https://testnet.aleoscan.io/address?a=" + publicKey + "#transitions");
+            console.log("   3. Перевірте історію транзакцій в Leo Wallet");
+            console.log("   4. Якщо транзакції немає в історії - вона не була відправлена");
+            console.log("   5. Спробуйте відправити повідомлення через 1-2 хвилини після деплою");
+            console.log("   6. Переконайтеся, що у вас достатньо коштів (мінімум 0.01 ALEO)");
+            console.log("   7. Перевірте, що програма задеплоєна: node verify_deployment.js");
           }
           
           
           // Update status after a moment with more helpful message
           setTimeout(() => {
-            setTxStatus(`✅ Message sent! Check AleoScan for status...`);
+            if (isRealTxId) {
+              setTxStatus(`✅ Повідомлення відправлено! Перевірте AleoScan для статусу...`);
+            } else {
+              setTxStatus(`⚠️ Транзакція може не пройти. Перевірте історію гаманця!`);
+            }
           }, 2000);
           
           // Final status update with link
           setTimeout(() => {
-            setTxStatus(`✅ Message sent! View on AleoScan`);
+            if (isRealTxId) {
+              setTxStatus(`✅ Повідомлення відправлено! Переглянути в AleoScan`);
+            } else {
+              setTxStatus(`⚠️ Перевірте історію транзакцій в Leo Wallet!`);
+            }
           }, 5000);
           
           // Verify transaction appears in explorer after a delay
@@ -814,9 +922,9 @@ const ChatInterface: React.FC = () => {
             }
           }, 10000); // Wait 10 seconds before checking
         } else {
-          console.error("❌ Invalid transaction ID format:", txId);
-          console.error("Expected string, got:", typeof actualTxId, actualTxId);
-          setTxStatus("⚠️ Transaction may not have been broadcasted. Check wallet and console.");
+          console.error("❌ Невалідний формат ID транзакції:", txId);
+          console.error("Очікувався рядок, отримано:", typeof actualTxId, actualTxId);
+          setTxStatus("⚠️ Транзакція може не бути відправлена. Перевірте гаманець та консоль.");
         }
         
         // Ensure the contact exists in the list (in case it was deleted or not synced)
@@ -847,7 +955,7 @@ const ChatInterface: React.FC = () => {
         
         setTimeout(() => setTxStatus(''), 5000);
       } else {
-        setTxStatus('Transaction failed - no transaction ID returned');
+        setTxStatus('❌ Транзакція не вдалася - не повернено ID транзакції');
         setTimeout(() => setTxStatus(''), 5000);
       }
     } catch (error: any) {
@@ -865,13 +973,14 @@ const ChatInterface: React.FC = () => {
       }
       
       if (errorMsg.includes("Permission") || errorMsg.includes("NOT_GRANTED") || errorMsg.includes("rejected") || 
-          errorStr.includes("Permission Not Granted") || errorStr.includes("NOT_GRANTED")) {
-        setTxStatus("❌ Transaction was rejected. Please approve it in your wallet to send the message.");
-        console.warn("⚠️ User rejected the transaction in wallet");
-        console.warn("💡 To send a message, you need to:");
-        console.warn("   1. Click 'Send Message' button");
-        console.warn("   2. Approve the transaction in the Leo Wallet popup");
-        console.warn("   3. Wait for transaction confirmation");
+          errorStr.includes("Permission Not Granted") || errorStr.includes("NOT_GRANTED") ||
+          errorMsg.includes("скасовано") || errorMsg.includes("відхилено")) {
+        setTxStatus("❌ Транзакцію відхилено. Будь ласка, підтвердіть її в гаманці для відправки повідомлення.");
+        console.warn("⚠️ Користувач відхилив транзакцію в гаманці");
+        console.warn("💡 Щоб відправити повідомлення, потрібно:");
+        console.warn("   1. Натиснути кнопку 'Відправити повідомлення'");
+        console.warn("   2. Підтвердити транзакцію у спливаючому вікні Leo Wallet");
+        console.warn("   3. Дочекатися підтвердження транзакції");
         
         // Remove optimistic message since transaction was rejected
         setHistories(prev => ({
@@ -883,9 +992,9 @@ const ChatInterface: React.FC = () => {
         return;
       } else if (errorMsg.includes("INVALID_PARAMS") && !errorStr.includes("addToWindow")) {
         // Only show INVALID_PARAMS if it's not from wallet extensions
-        setTxStatus(`❌ Error: Invalid transaction parameters. The program ${PROGRAM_ID} may not exist or function signature is wrong.`);
-        console.error("❌ Transaction failed with INVALID_PARAMS");
-        console.error("Transaction parameters:", {
+        setTxStatus(`❌ Помилка: Невалідні параметри транзакції. Програма ${PROGRAM_ID} може не існувати або сигнатура функції неправильна.`);
+        console.error("❌ Транзакція не вдалася з INVALID_PARAMS");
+        console.error("Параметри транзакції:", {
           program: PROGRAM_ID,
           function: "send_message",
           recipient: activeContact.address,
@@ -893,18 +1002,25 @@ const ChatInterface: React.FC = () => {
           message: messageField,
           timestamp: `${Math.floor(Date.now() / 1000)}u64`
         });
-        console.error("💡 Possible causes:");
-        console.error("  1. Program not deployed or wrong program ID");
-        console.error("  2. Function signature mismatch");
-        console.error("  3. Network mismatch (check if using testnet)");
-      } else if (errorMsg.includes("does not exist") || errorStr.includes("does not exist")) {
-        setTxStatus(`❌ Error: send_message function not found in ${PROGRAM_ID}. Please redeploy the program.`);
-        console.error(`❌ The program ${PROGRAM_ID} does not have the send_message function.`);
-        console.error("💡 Solution: Redeploy the program with: leo deploy --network testnet");
+        console.error("💡 Можливі причини:");
+        console.error("  1. Програма не задеплоєна або неправильний ID програми");
+        console.error("  2. Неправильна сигнатура функції");
+        console.error("  3. Неправильна мережа (перевірте, чи використовується testnet)");
+        console.error("  4. Перевірте деплой: node verify_deployment.js");
+      } else if (errorMsg.includes("does not exist") || errorStr.includes("does not exist") ||
+                 errorMsg.includes("не існує")) {
+        setTxStatus(`❌ Помилка: функція send_message не знайдена в ${PROGRAM_ID}. Будь ласка, перезадеплойте програму.`);
+        console.error(`❌ Програма ${PROGRAM_ID} не має функції send_message.`);
+        console.error("💡 Рішення: Перезадеплойте програму: leo deploy --network testnet");
+      } else if (errorMsg.includes("insufficient") || errorMsg.includes("balance") || 
+                 errorMsg.includes("недостатньо") || errorMsg.includes("баланс")) {
+        setTxStatus(`❌ Помилка: Недостатньо коштів. Потрібно мінімум 0.01 ALEO для комісії.`);
+        console.error("❌ Недостатньо коштів для транзакції");
+        console.error("💡 Потрібно мінімум 0.01 ALEO для комісії блокчейну");
       } else {
         const shortError = errorMsg.slice(0, 80);
-        setTxStatus(`❌ Error: ${shortError}${errorMsg.length > 80 ? '...' : ''}`);
-        console.error("❌ Transaction error:", error);
+        setTxStatus(`❌ Помилка: ${shortError}${errorMsg.length > 80 ? '...' : ''}`);
+        console.error("❌ Помилка транзакції:", error);
       }
       
       // Remove optimistic message on error
@@ -1420,7 +1536,7 @@ const ChatInterface: React.FC = () => {
                         false
                       );
 
-                      setTxStatus('Waiting for signature...');
+                      setTxStatus('Очікування підпису...');
                       const txId = await adapter.requestTransaction(transaction);
 
                       if (txId) {
