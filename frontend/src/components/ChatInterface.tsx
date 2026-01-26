@@ -1328,7 +1328,7 @@ const ChatInterface: React.FC = () => {
                         ]
                       };
 
-                      setTxStatus('Очікування підпису...');
+                      setTxStatus('Waiting for signature...');
                       const txId = await adapter.requestTransaction(transaction);
 
                       if (txId) {
