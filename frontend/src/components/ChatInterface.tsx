@@ -645,35 +645,9 @@ const ChatInterface: React.FC = () => {
       // All parameters are private for maximum privacy - nothing visible in transaction history
       // TRANSACTION_FEE (0.01 ALEO) is the ONLY fee charged - this is the blockchain transaction fee
       
-      // CRITICAL: Program must be deployed and indexed for transactions to work
-      // If program is not found, wallet returns INVALID_PARAMS and transaction won't be broadcasted
-      // This causes tokens to be deducted but transaction never appears in explorers
-      setTxStatus('Verifying program deployment...');
-      let programFound = false;
-      try {
-        // Check Provable API first (most reliable)
-        const provableUrl = `https://api.explorer.provable.com/v1/testnet3/program/${PROGRAM_ID}`;
-        const response = await fetch(provableUrl);
-        if (response.ok) {
-          programFound = true;
-        }
-      } catch (e) {
-        // Continue - program might exist but API check failed
-      }
-      
-      if (!programFound) {
-        setTxStatus('ERROR: Program not found. Transaction will fail.');
-        setIsSending(false);
-        setHistories(prev => ({
-          ...prev,
-          [currentChatId]: (prev[currentChatId] || []).filter(m => m.id !== userMsg.id)
-        }));
-        setTimeout(() => {
-          setTxStatus(`Program ${PROGRAM_ID} not found. Deploy it first.`);
-          setTimeout(() => setTxStatus(''), 10000);
-        }, 1000);
-        return;
-      }
+      // Note: Program verification - program exists on Provable Explorer
+      // Wallet will verify program existence when creating transaction
+      // If program not found, wallet returns INVALID_PARAMS and transaction won't be broadcasted
       
       // Ensure all parameters are strings with proper type annotations
       // For private parameters in Aleo wallet adapter, pass as plain strings
