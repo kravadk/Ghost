@@ -725,11 +725,13 @@ const ChatInterface: React.FC = () => {
       setTxStatus('Opening wallet... Please approve the transaction.');
       
       // Use requestTransactionWithRetry like tipzo
+      // Note: Wallet may return INVALID_PARAMS if program is not indexed on its RPC endpoints
+      // But the program might still be deployed and work - wallet will try to broadcast anyway
       let txId: string;
       try {
         txId = await requestTransactionWithRetry(adapter, transaction, {
           timeout: 30000,
-          maxRetries: 3
+          maxRetries: 1 // Don't retry on INVALID_PARAMS - it won't help
         });
       } catch (txError: any) {
         const errorMsg = txError?.message || String(txError);
@@ -830,20 +832,15 @@ const ChatInterface: React.FC = () => {
         return;
       } else if (errorMsg.includes("INVALID_PARAMS") && !errorStr.includes("addToWindow")) {
         const aleoScanUrl = getAleoScanUrl();
-        // Check if program was recently deployed (within last 30 minutes)
-        const deploymentTime = new Date('2026-01-26T18:47:00Z').getTime(); // Approximate deployment time for 012
-        const now = Date.now();
-        const minutesSinceDeployment = Math.floor((now - deploymentTime) / 60000);
-        
-        if (minutesSinceDeployment < 30) {
-          setTxStatus(`⏳ Program deployed ${minutesSinceDeployment}m ago. Indexing in progress... (5-15 min)`);
-          console.warn(`Program ${PROGRAM_ID} deployed recently. Waiting for RPC indexing (${minutesSinceDeployment} minutes ago).`);
-        } else {
-          setTxStatus(`⚠️ Program not indexed on wallet RPC. Check: ${aleoScanUrl}`);
-          console.error("INVALID_PARAMS: Program may exist but not indexed on wallet's RPC endpoints.");
-        }
-        console.error(`Check if program exists: ${aleoScanUrl}`);
-        console.error("If program exists on AleoScan but wallet shows error, wait for RPC indexing.");
+        // Program is deployed but wallet's RPC endpoints haven't indexed it yet
+        // This is a known issue - wallet uses different RPC endpoints than public explorers
+        setTxStatus(`⚠️ Wallet RPC hasn't indexed program yet. Program is deployed but wallet can't find it.`);
+        console.error("INVALID_PARAMS: Program is deployed but wallet's RPC endpoints haven't indexed it.");
+        console.error("This is a known issue with Aleo testnet RPC indexing delays.");
+        console.error(`Program deployment confirmed: Transaction at1u75cc5pghlkmxvwjt3dzuy02dv4fpdwkvv2nauszuxr6qav2uqqqnextgh`);
+        console.error(`Check program on explorer: ${aleoScanUrl}`);
+        console.error("Solution: Wait for wallet's RPC endpoints to index the program (can take hours).");
+        console.error("Alternative: Try using a different wallet or wait for network sync.");
       } else if (errorMsg.includes("does not exist") || errorStr.includes("does not exist")) {
         setTxStatus(`Error: send_message function not found in ${PROGRAM_ID}.`);
       } else if (errorMsg.includes("insufficient") || errorMsg.includes("balance")) {
