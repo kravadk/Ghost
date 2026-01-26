@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useWallet } from "@demox-labs/aleo-wallet-adapter-react";
-import { WalletAdapterNetwork, Transaction } from "@demox-labs/aleo-wallet-adapter-base";
+import { WalletAdapterNetwork } from "@demox-labs/aleo-wallet-adapter-base";
 import { Message, Contact } from '../types';
 import { PROGRAM_ID } from '../deployed_program';
 import { stringToField, fieldToString } from '../utils/messageUtils';
@@ -1314,15 +1314,19 @@ const ChatInterface: React.FC = () => {
                       const nameField = stringToField(profileName);
                       const bioField = stringToField(profileBio);
 
-                      const transaction = Transaction.createTransaction(
-                        publicKey,
-                        network,
-                        PROGRAM_ID,
-                        "create_profile",
-                        [nameField, bioField],
-                        TRANSACTION_FEE,
-                        false
-                      );
+                      const transaction = {
+                        address: String(publicKey),
+                        chainId: network,
+                        fee: TRANSACTION_FEE, // 10,000,000,000 microcredits = 0.01 ALEO
+                        feePrivate: false,
+                        transitions: [
+                          {
+                            program: String(PROGRAM_ID),
+                            functionName: "create_profile",
+                            inputs: [nameField, bioField]
+                          }
+                        ]
+                      };
 
                       setTxStatus('Очікування підпису...');
                       const txId = await adapter.requestTransaction(transaction);
