@@ -5,17 +5,6 @@ import { WalletAdapterNetwork, DecryptPermission } from "@demox-labs/aleo-wallet
 import LandingPage from './components/LandingPage';
 import ChatInterface from './components/ChatInterface';
 
-// One-time notice: EVM wallet errors in console are from other extensions, not this app
-if (typeof window !== 'undefined' && !(window as any).__ghost_evm_notice_shown) {
-  (window as any).__ghost_evm_notice_shown = true;
-  console.info(
-    '%cGhost uses Leo Wallet (Aleo) only. ' +
-    'Errors about "ethereum" or from Razor/Nightly wallet are from other extensions and can be ignored. ' +
-    'For best experience use only Leo Wallet on this site.',
-    'color: #666; font-size: 11px;'
-  );
-}
-
 const Content: React.FC = () => {
   const { publicKey, connecting, error } = useWallet();
   

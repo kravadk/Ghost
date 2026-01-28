@@ -1,4 +1,4 @@
-// Contract hook — transaction logic aligned with tipzo (same fee 10_000, shape, requestTransactionWithRetry, return txId as-is)
+// Contract hook — transaction logic aligned with tipzo (fee 50000, feePrivate false, requestTransactionWithRetry, return txId as-is)
 
 import { useState } from 'react';
 import { useWallet } from '@demox-labs/aleo-wallet-adapter-react';

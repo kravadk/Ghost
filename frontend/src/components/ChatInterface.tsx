@@ -11,7 +11,7 @@ import { useContract } from '../hooks/useContract';
 import { ProgramStatus } from './ProgramStatus';
 import { checkProgramExists as checkProgramRPC, waitForProgram } from '../utils/aleo-rpc';
 import { validateTransactionParams, cleanAddress } from '../utils/validation';
-import { isRealTransactionId, isWalletUuid, getTransactionExplorerUrl } from '../utils/transactionUtils';
+import { isRealTransactionId, getTransactionExplorerUrl } from '../utils/transactionUtils';
 import { logger } from '../utils/logger';
 
 // Helper function to generate initials from address
@@ -741,61 +741,30 @@ const ChatInterface: React.FC = () => {
         throw txError;
       }
 
-      // txId can be either real TX ID (at1...) or wallet UUID
+      // tipzo-style: show same success message for any txId returned by wallet
       if (txId && typeof txId === 'string' && txId.length > 0) {
         const shortId = txId.length > 8 ? txId.slice(0, 8) : txId;
-        
-        // Check if this is a real transaction ID (starts with 'at1')
-        if (isRealTransactionId(txId)) {
-          const explorerUrl = getTransactionExplorerUrl(txId, 'testnet');
-          setTxStatus(`✅ Transaction submitted! ID: ${shortId}... ${explorerUrl ? `View: ${explorerUrl}` : ''}`);
-          
-          // Ensure the contact exists in the list
-          const contactExists = contacts.find(c => 
-            c.address?.toLowerCase() === activeContact.address?.toLowerCase()
-          );
-          
-          if (!contactExists && activeContact.address) {
-            const newContact: Contact = {
-              id: `contact-${activeContact.address}`,
-              name: activeContact.name || activeContact.address.slice(0, 10) + '...' + activeContact.address.slice(-6),
-              description: activeContact.address,
-              context: '',
-              initials: getInitialsFromAddress(activeContact.address),
-              address: activeContact.address,
-              unreadCount: 0
-            };
-            setContacts(prev => {
-              const exists = prev.find(c => c.address?.toLowerCase() === activeContact.address?.toLowerCase());
-              return exists ? prev : [...prev, newContact];
-            });
-          }
-          
-          setTimeout(() => setTxStatus(''), 8000);
-        } else if (isWalletUuid(txId)) {
-          // UUID - transaction created but not yet signed/broadcasted
-          setTxStatus(`⏳ Transaction created (UUID: ${shortId}...). Waiting for wallet approval and broadcast...`);
-          console.log('💡 Please approve the transaction in your wallet if popup appears.');
-          
-          // Don't remove message from UI, because transaction may be in process
-          // useContract already attempts to get real TX ID
-          // If it didn't get it, show UUID
-          setTimeout(() => {
-            setTxStatus(`Transaction created but not yet broadcasted. UUID: ${shortId}... Check wallet for status.`);
-            setTimeout(() => setTxStatus(''), 10000);
-          }, 5000);
-        } else {
-          // Unknown format
-          setTxStatus(`⚠️ Transaction response received: ${shortId}... (unknown format)`);
-          setIsSending(false);
-          setHistories(prev => ({
-            ...prev,
-            [currentChatId]: (prev[currentChatId] || []).filter(m => m.id !== userMsg.id)
-          }));
-          setTimeout(() => setTxStatus(''), 5000);
+        const explorerUrl = isRealTransactionId(txId) ? getTransactionExplorerUrl(txId, 'testnet') : '';
+        setTxStatus(explorerUrl ? `Transaction submitted: ${shortId}... View: ${explorerUrl}` : `Transaction submitted: ${shortId}...`);
+        const contactExists = contacts.find(c => c.address?.toLowerCase() === activeContact.address?.toLowerCase());
+        if (!contactExists && activeContact.address) {
+          const newContact: Contact = {
+            id: `contact-${activeContact.address}`,
+            name: activeContact.name || activeContact.address.slice(0, 10) + '...' + activeContact.address.slice(-6),
+            description: activeContact.address,
+            context: '',
+            initials: getInitialsFromAddress(activeContact.address),
+            address: activeContact.address,
+            unreadCount: 0
+          };
+          setContacts(prev => {
+            const exists = prev.find(c => c.address?.toLowerCase() === activeContact.address?.toLowerCase());
+            return exists ? prev : [...prev, newContact];
+          });
         }
+        setTimeout(() => setTxStatus(''), 8000);
       } else {
-        setTxStatus('Transaction failed - invalid response');
+        setTxStatus('Transaction failed - no response');
         setIsSending(false);
         setHistories(prev => ({
           ...prev,
@@ -814,24 +783,13 @@ const ChatInterface: React.FC = () => {
       }
 
       if (errorMsg.includes("Permission") || errorMsg.includes("NOT_GRANTED") || (errorMsg.includes("rejected") && !errorMsg.includes("INVALID_PARAMS"))) {
-        setTxStatus("Transaction was rejected. Please approve it in your wallet.");
-        setHistories(prev => ({
-          ...prev,
-          [currentChatId]: (prev[currentChatId] || []).filter(m => m.id !== userMsg.id)
-        }));
-        setTimeout(() => setTxStatus(''), 8000);
-        return;
-      }
-      if (errorMsg.includes("INVALID_PARAMS") || errorMsg.includes("not broadcast") || errorMsg.includes("not indexed") || errorMsg.includes("Wallet RPC")) {
-        setTxStatus(errorMsg.length > 80 ? errorMsg.slice(0, 77) + '...' : errorMsg);
-        setTimeout(() => setTxStatus(''), 12000);
-      } else if (errorMsg.includes("does not exist")) {
-        setTxStatus(`Error: send_message not found in ${PROGRAM_ID}.`);
+        setTxStatus("Transaction rejected.");
       } else if (errorMsg.includes("insufficient") || errorMsg.includes("balance")) {
-        setTxStatus("Error: Insufficient funds. Need sufficient balance for transaction fee.");
+        setTxStatus("Insufficient funds for fee.");
       } else {
-        setTxStatus(errorMsg.length > 80 ? errorMsg.slice(0, 77) + '...' : errorMsg);
+        setTxStatus(errorMsg.length > 60 ? errorMsg.slice(0, 57) + '...' : errorMsg);
       }
+      setTimeout(() => setTxStatus(''), 10000);
 
       setHistories(prev => ({
         ...prev,
