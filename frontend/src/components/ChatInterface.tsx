@@ -4,7 +4,7 @@ import { WalletAdapterNetwork } from "@demox-labs/aleo-wallet-adapter-base";
 import { Message, Contact } from '../types';
 import { PROGRAM_ID } from '../deployed_program';
 import { stringToField, fieldToString } from '../utils/messageUtils';
-import { TRANSACTION_FEE } from '../utils/constants';
+import { TRANSACTION_FEE, MIN_FEE_MICROCREDITS } from '../utils/constants';
 import { requestTransactionWithRetry } from '../utils/walletUtils';
 import { checkProgramExists, getAleoScanUrl } from '../utils/programUtils';
 import { useContract } from '../hooks/useContract';
@@ -602,9 +602,8 @@ const ChatInterface: React.FC = () => {
           const balance = await adapter.requestBalance();
           logger.debug("Current balance:", balance);
           
-          // Balance might be in different formats, check if it's sufficient
-          // TRANSACTION_FEE = 10,000,000,000 microcredits = 0.01 ALEO
-          const minRequired = TRANSACTION_FEE;
+          // Balance might be in different formats, check if it's sufficient (0.01 ALEO)
+          const minRequired = MIN_FEE_MICROCREDITS;
           
           if (balance !== undefined && balance !== null) {
             const balanceNum = typeof balance === 'string' 
@@ -833,27 +832,17 @@ const ChatInterface: React.FC = () => {
         
         setTimeout(() => setTxStatus(''), 8000);
         return;
-      } else if ((errorMsg.includes("INVALID_PARAMS") || errorMsg.includes("program not found") || errorMsg.includes("not indexed") || errorMsg.includes("not broadcasted") || errorMsg.includes("rejected it before")) && !errorStr.includes("addToWindow")) {
+      } else if ((errorMsg.includes("INVALID_PARAMS") || errorMsg.includes("program not found") || errorMsg.includes("not indexed") || errorMsg.includes("not broadcast") || errorMsg.includes("rejected it before")) && !errorStr.includes("addToWindow")) {
         const aleoScanUrl = getAleoScanUrl();
-        // Program is deployed but wallet's RPC endpoints haven't indexed it yet
-        // This is a known issue - wallet uses different RPC endpoints than public explorers
-        setTxStatus(`⚠️ Wallet rejected transaction (INVALID_PARAMS). Program exists on public RPC but wallet's RPC hasn't indexed it yet. No popup appeared because wallet rejected it before showing.`);
-        // Keep detailed logs for INVALID_PARAMS - this is a critical error
-        console.error("❌ INVALID_PARAMS: Program is deployed but wallet's RPC endpoints haven't indexed it.");
-        console.error("📋 This is a known issue with Aleo testnet RPC indexing delays.");
-        console.error(`✅ Program deployment confirmed: Transaction at1u75cc5pghlkmxvwjt3dzuy02dv4fpdwkvv2nauszuxr6qav2uqqqnextgh`);
-        console.error(`🔍 Check program on explorer: ${aleoScanUrl}`);
-        console.error("⏰ Solution: Wait 5-10 minutes for wallet's RPC endpoints to index the program.");
-        console.error("💡 Why no popup? Wallet checks program on its RPC BEFORE showing popup. If program not found, it rejects silently.");
-        
-        // Show detailed message
+        // Transaction was never broadcast — no popup, so it won't appear on scan
+        setTxStatus(`Transaction was not broadcast (no approval popup). It will NOT appear on AleoScan. Use Leo Wallet only; wait 5–10 min and try again.`);
+        console.error("❌ Transaction not broadcast: wallet rejected before popup (RPC has not indexed program yet).");
+        console.error("📋 Use only Leo Wallet. Wait 5–10 min for wallet RPC to index the program, then try again.");
+        console.error(`🔍 Program on explorer: ${aleoScanUrl}`);
         setTimeout(() => {
-          setTxStatus('💡 Wallet RPC needs to index the program. Wait 5-10 minutes and try again. Check wallet extension for any pending transactions.');
-          setTimeout(() => {
-            setTxStatus(`Program: ${PROGRAM_ID} | Check: ${aleoScanUrl}`);
-            setTimeout(() => setTxStatus(''), 20000);
-          }, 5000);
-        }, 3000);
+          setTxStatus('💡 Use only Leo Wallet. Wait 5–10 min and try again — transaction will then appear on scan after you approve.');
+          setTimeout(() => setTxStatus(''), 15000);
+        }, 4000);
       } else if (errorMsg.includes("does not exist") || errorStr.includes("does not exist")) {
         setTxStatus(`Error: send_message function not found in ${PROGRAM_ID}.`);
       } else if (errorMsg.includes("insufficient") || errorMsg.includes("balance")) {

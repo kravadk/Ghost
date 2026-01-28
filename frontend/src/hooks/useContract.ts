@@ -111,18 +111,20 @@ export function useContract() {
         
         if (isWalletUuid(txResponse)) {
           logger.debug('Wallet UUID received:', txResponse);
-          console.log('💡 IMPORTANT: Check your wallet extension for a popup to approve the transaction.');
-          console.log('💡 If no popup appears, wallet may have rejected the transaction silently.');
+          console.log('💡 Check your Leo Wallet extension for a popup to approve the transaction.');
+          console.log('💡 Use only Leo Wallet on this site; other wallets (EVM) can cause console errors.');
           
-          // Wait for real TX ID (shorter timeout, because if popup didn't appear, it won't appear)
+          // Wait for real TX ID — give user time to approve (popup can be slow)
           logger.debug('Attempting to get real transaction ID...');
-          logger.debug('Waiting up to 10 seconds for wallet to broadcast...');
+          const waitAttempts = 25;
+          const waitDelayMs = 2000;
+          logger.debug(`Waiting up to ${waitAttempts * waitDelayMs / 1000}s for wallet to broadcast...`);
           
           const realTxId = await getRealTransactionId(
             wallet,
             txResponse,
-            10, // 10 attempts (10 seconds) - if popup didn't appear, it won't appear
-            1000 // 1 second between attempts
+            waitAttempts,
+            waitDelayMs
           );
           
           if (realTxId) {
@@ -133,31 +135,23 @@ export function useContract() {
             }
             return realTxId;
           } else {
-            // If real TX ID not obtained, this means:
-            // 1. Popup didn't appear (wallet rejected transaction BEFORE signing)
-            // 2. Wallet RPC hasn't indexed the program
-            console.warn('⚠️ Could not get real TX ID after 10 attempts');
-            console.warn('⚠️ This means wallet rejected the transaction BEFORE showing popup.');
-            console.warn('⚠️ Wallet RPC endpoints have not indexed the program yet.');
-            console.warn('⚠️ UUID:', txResponse);
-            console.warn('⚠️ Program exists on public RPC:', `https://api.explorer.aleo.org/v1/testnet/program/${PROGRAM_ID}`);
-            console.warn('⚠️ But wallet uses different RPC endpoints that may not have indexed it yet.');
+            // UUID is wallet-internal only; transaction was never broadcast, so it won't appear on scan
+            console.warn('⚠️ Could not get real TX ID after', waitAttempts, 'attempts');
+            console.warn('⚠️ The UUID is only in your wallet; the transaction was never broadcast, so it will NOT appear on AleoScan.');
+            console.warn('⚠️ Wallet rejected before showing popup (program not indexed on wallet RPC).');
+            console.warn('⚠️ Program on public RPC:', `https://api.explorer.aleo.org/v1/testnet/program/${PROGRAM_ID}`);
             
-            // Check if program exists on public RPC
             const programInfo = await checkProgramExists(PROGRAM_ID);
             
             if (programInfo.exists) {
               throw new Error(
-                `Transaction created (UUID: ${txResponse.slice(0, 8)}...) but wallet rejected it before showing popup. ` +
-                `Program ${PROGRAM_ID} exists on public RPC (${programInfo.url}) but wallet's RPC endpoints haven't indexed it yet. ` +
-                `\n\nThis is a known issue with Aleo testnet - wallet uses different RPC than public explorers. ` +
-                `\n\nSolution: Wait 5-10 minutes for wallet RPC to index the program, then try again. ` +
-                `\n\nAlternatively, check your wallet extension for any pending transactions.`
+                `Transaction was not broadcast — it will not appear on AleoScan. ` +
+                `The wallet returned an internal UUID but rejected the transaction before showing the approval popup (wallet RPC has not indexed ${PROGRAM_ID} yet). ` +
+                `Use only Leo Wallet. Wait 5–10 minutes and try again; if the popup still doesn’t appear, wait longer for wallet RPC to sync.`
               );
             } else {
               throw new Error(
-                `Transaction created (UUID: ${txResponse.slice(0, 8)}...) but program ${PROGRAM_ID} not found on any RPC endpoint. ` +
-                `Please verify the program is deployed.`
+                `Transaction was not broadcast. Program ${PROGRAM_ID} not found on any RPC. Verify the program is deployed.`
               );
             }
           }

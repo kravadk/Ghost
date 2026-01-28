@@ -75,6 +75,7 @@ export function ProgramStatus() {
       <span className="text-lg">✅</span>
       <div>
         <div>Program is indexed and ready to use</div>
+        <div className="text-[10px] text-gray-500 normal-case font-normal mt-0.5">Use only Leo Wallet on this site (other wallets may cause console errors).</div>
         {programUrl && (
           <a 
             href={programUrl} 
