@@ -73,7 +73,7 @@ const LandingPage: React.FC = () => {
     <div className="min-h-screen bg-brutal-white text-brutal-black overflow-x-hidden">
       
       {/* Navigation */}
-      <nav className="border-b-4 border-brutal-black p-4 flex justify-between items-center sticky top-0 bg-brutal-white z-50">
+      <nav className="border-b-4 border-brutal-black p-4 flex justify-between items-center sticky top-0 bg-brutal-white z-50 animate-fade-in">
         <div className="font-black text-2xl tracking-tighter uppercase">Ghost<span className="text-brutal-yellow bg-brutal-black px-1">.Aleo</span></div>
         <div className="hidden md:flex gap-6 font-bold uppercase text-sm">
           <a href="#features" className="hover:underline">ZK-Proof</a>
@@ -89,8 +89,8 @@ const LandingPage: React.FC = () => {
         </button>
 
         {showModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={() => setShowModal(false)}>
-            <div className="bg-white border-4 border-black p-6 max-w-md w-full mx-4" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-backdrop fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={() => setShowModal(false)}>
+            <div className="modal-content bg-white border-4 border-black p-6 max-w-md w-full mx-4 shadow-hard-lg" onClick={(e) => e.stopPropagation()}>
               <h2 className="text-2xl font-black uppercase mb-4">Select Wallet</h2>
               {wallets.length === 0 ? (
                 <div className="p-4 text-center">
@@ -131,7 +131,7 @@ const LandingPage: React.FC = () => {
 
       {/* Hero Section */}
       <header className="relative p-8 md:p-20 border-b-4 border-brutal-black flex flex-col md:flex-row items-center justify-between gap-12">
-        <div className="max-w-2xl z-10">
+        <div className="max-w-2xl z-10 animate-slide-up">
           <div className="inline-block bg-brutal-yellow border-2 border-brutal-black px-2 py-1 font-bold mb-4 shadow-hard-sm">
             BETA v0.9.1 ON MAINNET
           </div>
@@ -147,7 +147,7 @@ const LandingPage: React.FC = () => {
           <button 
             onClick={handleConnect}
             disabled={connecting || !!publicKey}
-            className="bg-brutal-yellow border-4 border-brutal-black px-8 py-4 text-2xl font-black uppercase shadow-hard hover:translate-x-1 hover:translate-y-1 hover:shadow-none transition-all disabled:opacity-50"
+            className="bg-brutal-yellow border-4 border-brutal-black px-8 py-4 text-2xl font-black uppercase shadow-hard hover:translate-x-1 hover:translate-y-1 hover:shadow-none active:translate-x-0 active:translate-y-0 transition-all duration-150 disabled:opacity-50"
           >
             {connecting ? 'INITIALIZING...' : publicKey ? 'CONNECTED' : 'LAUNCH APP_'}
           </button>

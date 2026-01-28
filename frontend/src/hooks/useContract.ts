@@ -35,16 +35,18 @@ export function useContract() {
     setError(null);
 
     try {
+      // Leo Wallet expects chainId as string; use explicit value to avoid INVALID_PARAMS
+      const chainId = typeof network === 'string' ? network : 'testnetbeta';
       const transaction = {
-        address: String(publicKey),
-        chainId: network,
-        fee: TRANSACTION_FEE,
+        address: typeof publicKey === 'string' ? publicKey : String(publicKey),
+        chainId,
+        fee: Number(TRANSACTION_FEE),
         feePrivate: false,
         transitions: [
           {
             program: String(PROGRAM_ID),
-            functionName: functionName,
-            inputs: inputs,
+            functionName: String(functionName),
+            inputs: inputs.map((x) => String(x)),
           }
         ]
       };
@@ -169,7 +171,7 @@ export function useContract() {
   };
 
   /**
-   * Creates profile
+   * Creates profile (on-chain)
    */
   const createProfile = async (
     name: string,
@@ -183,11 +185,27 @@ export function useContract() {
     );
   };
 
+  /**
+   * Updates profile (on-chain; same as create — overwrites mapping)
+   */
+  const updateProfile = async (
+    name: string,
+    bio: string,
+    options?: ExecuteTransactionOptions
+  ) => {
+    return executeTransaction(
+      'update_profile',
+      [name, bio],
+      options
+    );
+  };
+
   return {
     loading,
     error,
     sendMessage,
     createProfile,
+    updateProfile,
     executeTransaction,
   };
 }

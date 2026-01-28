@@ -30,7 +30,7 @@ const ChatInterface: React.FC = () => {
   const { publicKey, wallet, disconnect } = useWallet();
   const adapter = wallet?.adapter as any;
   const network = WalletAdapterNetwork.TestnetBeta;
-  const { sendMessage: sendMessageContract, createProfile: createProfileContract, loading: contractLoading, error: contractError } = useContract();
+  const { sendMessage: sendMessageContract, createProfile: createProfileContract, updateProfile: updateProfileContract, loading: contractLoading, error: contractError } = useContract();
   // State for active chat selection
   const [activeContactId, setActiveContactId] = useState<string | null>(null);
   // Program deployment status
@@ -207,6 +207,22 @@ const ChatInterface: React.FC = () => {
       }
     }
   }, [histories, publicKey]);
+
+  // Load profile from localStorage when opening profile modal
+  useEffect(() => {
+    if (showProfileModal && publicKey) {
+      try {
+        const raw = localStorage.getItem(`ghost_profile_${publicKey}`);
+        if (raw) {
+          const data = JSON.parse(raw) as { name?: string; bio?: string };
+          setProfileName(data.name ?? '');
+          setProfileBio(data.bio ?? '');
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+  }, [showProfileModal, publicKey]);
 
   // Sync messages from blockchain
   const syncMessages = async () => {
@@ -467,20 +483,15 @@ const ChatInterface: React.FC = () => {
     return () => clearInterval(interval);
   }, []);
 
-  useEffect(() => {
-    if (publicKey && adapter) {
-      // Wait a bit for wallet to be ready
-      const timeout = setTimeout(() => {
-        syncMessages();
-      }, 1000);
-      
-      const interval = setInterval(syncMessages, 30000); // Sync every 30 seconds
-      return () => {
-        clearTimeout(timeout);
-        clearInterval(interval);
-      };
-    }
-  }, [publicKey, adapter]);
+  // Auto-sync disabled: requestRecordPlaintexts/requestRecords often cause INVALID_PARAMS in Leo Wallet.
+  // User can click "SYNC MESSAGES" to sync manually.
+  // useEffect(() => {
+  //   if (publicKey && adapter) {
+  //     const timeout = setTimeout(() => syncMessages(), 1000);
+  //     const interval = setInterval(syncMessages, 30000);
+  //     return () => { clearTimeout(timeout); clearInterval(interval); };
+  //   }
+  // }, [publicKey, adapter]);
 
   const handleContactSelect = (id: string) => {
     setActiveContactId(id);
@@ -729,6 +740,7 @@ const ChatInterface: React.FC = () => {
         if (errorMsg.includes("cancel") || errorMsg.includes("reject") || 
             errorMsg.includes("denied") || errorMsg.includes("User rejected") ||
             errorMsg.includes("User cancelled") || txError?.code === 4001) {
+          console.log('[Ghost] Message cancelled by user');
           setTxStatus("Transaction cancelled by user");
           setIsSending(false);
           setHistories(prev => ({
@@ -744,6 +756,7 @@ const ChatInterface: React.FC = () => {
       // tipzo-style: show same success message for any txId returned by wallet
       if (txId && typeof txId === 'string' && txId.length > 0) {
         const shortId = txId.length > 8 ? txId.slice(0, 8) : txId;
+        console.log('[Ghost] Message sent:', shortId + '...');
         const explorerUrl = isRealTransactionId(txId) ? getTransactionExplorerUrl(txId, 'testnet') : '';
         setTxStatus(explorerUrl ? `Transaction submitted: ${shortId}... View: ${explorerUrl}` : `Transaction submitted: ${shortId}...`);
         const contactExists = contacts.find(c => c.address?.toLowerCase() === activeContact.address?.toLowerCase());
@@ -764,6 +777,7 @@ const ChatInterface: React.FC = () => {
         }
         setTimeout(() => setTxStatus(''), 8000);
       } else {
+        console.warn('[Ghost] Message failed: no tx id');
         setTxStatus('Transaction failed - no response');
         setIsSending(false);
         setHistories(prev => ({
@@ -775,6 +789,7 @@ const ChatInterface: React.FC = () => {
     } catch (error: any) {
       const errorMsg = error?.message || String(error);
       const errorStr = String(error);
+      console.warn('[Ghost] Message failed:', errorMsg);
 
       if ((errorStr.includes("addToWindow.js") || errorStr.includes("evmAsk.js") ||
           errorStr.includes("contentScript.ts") || errorStr.includes("inject.ts")) &&
@@ -868,15 +883,15 @@ const ChatInterface: React.FC = () => {
   const totalUnread = contacts.reduce((sum, c) => sum + (c.unreadCount || 0), 0);
 
   return (
-    <div className="h-screen flex bg-brutal-white max-w-7xl mx-auto border-x-4 border-brutal-black overflow-hidden">
+    <div className="h-screen flex bg-brutal-white max-w-7xl mx-auto border-x-4 border-brutal-black overflow-hidden animate-fade-in">
       
       {/* SIDEBAR - Contact List */}
       <div className={`
-        flex-col border-r-4 border-brutal-black bg-brutal-white w-full md:w-80 flex-shrink-0 transition-all
+        flex-col border-r-4 border-brutal-black bg-brutal-white w-full md:w-80 flex-shrink-0 transition-all duration-300
         ${activeContactId ? 'hidden md:flex' : 'flex'}
       `}>
         {/* Header with wallet info */}
-        <div className="bg-brutal-yellow p-4 border-b-4 border-brutal-black">
+        <div className="bg-brutal-yellow p-4 border-b-4 border-brutal-black animate-slide-up">
           <div className="text-xs font-bold uppercase mb-2">Connected Wallet</div>
           {publicKey ? (
             <div 
@@ -908,7 +923,7 @@ const ChatInterface: React.FC = () => {
                   setShowNewChatModal(true);
                 }
               }}
-              className="flex-1 text-xs font-bold border-2 border-black p-2 hover:bg-black hover:text-white transition-colors uppercase bg-white"
+              className="flex-1 text-xs font-bold border-2 border-black p-2 hover:bg-black hover:text-white active:scale-[0.98] transition-all duration-150 uppercase bg-white"
             >
               + NEW CHAT
             </button>
@@ -921,13 +936,13 @@ const ChatInterface: React.FC = () => {
                   setShowProfileModal(true);
                 }
               }}
-              className="text-xs font-bold border-2 border-black p-2 hover:bg-black hover:text-white transition-colors uppercase bg-white"
+              className="text-xs font-bold border-2 border-black p-2 hover:bg-black hover:text-white active:scale-[0.98] transition-all duration-150 uppercase bg-white"
             >
               PROFILE
             </button>
             <button 
               onClick={() => disconnect()} 
-              className="text-xs font-bold border-2 border-black p-2 hover:bg-black hover:text-white transition-colors uppercase bg-white"
+              className="text-xs font-bold border-2 border-black p-2 hover:bg-black hover:text-white active:scale-[0.98] transition-all duration-150 uppercase bg-white"
             >
               DISCONNECT
             </button>
@@ -942,7 +957,7 @@ const ChatInterface: React.FC = () => {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="SEARCH CONTACTS..."
-              className="w-full p-2 border-2 border-brutal-black bg-white font-mono text-sm focus:outline-none focus:bg-brutal-yellow placeholder-gray-400"
+              className="w-full p-2 border-2 border-brutal-black bg-white font-mono text-sm focus:outline-none focus:bg-brutal-yellow focus:ring-2 focus:ring-brutal-black placeholder-gray-400 transition-all duration-200"
             />
             {searchQuery && (
               <button
@@ -963,7 +978,7 @@ const ChatInterface: React.FC = () => {
               }
             }}
             disabled={isSyncing || !publicKey}
-            className="w-full p-2 border-2 border-brutal-black bg-brutal-yellow hover:bg-yellow-300 font-bold uppercase text-xs disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="w-full p-2 border-2 border-brutal-black bg-brutal-yellow hover:bg-yellow-300 font-bold uppercase text-xs disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 active:scale-[0.98]"
           >
             {isSyncing ? 'SYNCING...' : 'SYNC MESSAGES'}
           </button>
@@ -990,14 +1005,15 @@ const ChatInterface: React.FC = () => {
                   </span>
                 )}
               </div>
-              {filteredContacts.map(contact => (
+              {filteredContacts.map((contact, idx) => (
                 <div 
                   key={contact.id}
+                  style={{ animationDelay: `${Math.min(idx, 12) * 35}ms` }}
                   className={`
-                    p-3 border-b-2 border-brutal-black transition-all
+                    contact-item-enter p-3 border-b-2 border-brutal-black transition-all duration-200
                     ${activeContactId === contact.id 
                       ? 'bg-brutal-black text-brutal-yellow' 
-                      : 'bg-white text-black hover:bg-brutal-yellow'}
+                      : 'bg-white text-black hover:bg-brutal-yellow hover:shadow-hard-sm'}
                   `}
                 >
                   <div 
@@ -1103,13 +1119,13 @@ const ChatInterface: React.FC = () => {
 
       {/* MAIN CHAT AREA */}
       <div className={`
-        flex-1 flex-col relative bg-[url('https://www.transparenttextures.com/patterns/graphy.png')]
+        flex-1 flex-col relative chat-area-bg
         ${activeContactId ? 'flex' : 'hidden md:flex'}
       `}>
         {activeContactId ? (
           <>
             {/* Chat Header */}
-            <header className="bg-white border-b-4 border-brutal-black p-4 z-10 sticky top-0">
+            <header className="bg-white border-b-4 border-brutal-black p-4 z-10 sticky top-0 shadow-hard-sm animate-slide-up">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-4">
                   <button 
@@ -1163,7 +1179,7 @@ const ChatInterface: React.FC = () => {
               {currentMessages.map((msg) => (
                 <div
                   key={msg.id}
-                  className={`flex ${msg.isUser ? 'justify-end' : 'justify-start'}`}
+                  className={`flex chat-message-enter ${msg.isUser ? 'justify-end' : 'justify-start'}`}
                 >
                   <div className={`max-w-[85%] md:max-w-[70%] relative ${msg.isUser ? 'mr-2' : 'ml-2'}`}>
                     <div className={`absolute -top-3 ${msg.isUser ? 'right-0' : 'left-0'} bg-brutal-black text-white text-xs px-2 py-0.5 font-bold uppercase`}>
@@ -1171,7 +1187,8 @@ const ChatInterface: React.FC = () => {
                     </div>
                     <div className={`
                       p-4 border-4 border-brutal-black shadow-hard text-lg font-bold break-words whitespace-pre-wrap
-                      ${msg.isUser ? 'bg-brutal-yellow text-black' : 'bg-white text-black'}
+                      transition-shadow duration-200
+                      ${msg.isUser ? 'bg-brutal-yellow text-black hover:shadow-hard-lg' : 'bg-white text-black hover:shadow-hard'}
                     `}>
                       {msg.text}
                     </div>
@@ -1185,7 +1202,7 @@ const ChatInterface: React.FC = () => {
             </div>
 
             {/* Input */}
-            <footer className="bg-white border-t-4 border-brutal-black p-4 sticky bottom-0 z-20">
+            <footer className="bg-white border-t-4 border-brutal-black p-4 sticky bottom-0 z-20 shadow-[0_-4px_0_0_#000]">
               <div className="mb-2">
                 <ProgramStatus />
               </div>
@@ -1209,7 +1226,7 @@ const ChatInterface: React.FC = () => {
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
                   disabled={isSending || !publicKey}
-                  className="flex-1 bg-gray-50 border-4 border-brutal-black p-3 md:p-4 font-bold text-lg focus:outline-none focus:bg-white placeholder-gray-400 shadow-hard-sm focus:shadow-none transition-all disabled:opacity-50"
+                  className="flex-1 bg-gray-50 border-4 border-brutal-black p-3 md:p-4 font-bold text-lg focus:outline-none focus:bg-white focus:ring-2 focus:ring-brutal-yellow focus:border-brutal-black placeholder-gray-400 shadow-hard-sm focus:shadow-none transition-all duration-200 disabled:opacity-50"
                   placeholder={publicKey ? "Type encrypted message..." : "Connect wallet to send messages..."}
                   autoComplete="off"
                 />
@@ -1223,7 +1240,7 @@ const ChatInterface: React.FC = () => {
                       setShowWalletRequiredModal(true);
                     }
                   }}
-                  className="bg-brutal-yellow border-4 border-brutal-black px-6 md:px-8 font-black uppercase text-lg md:text-xl hover:translate-x-1 hover:translate-y-1 hover:shadow-none shadow-hard transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="bg-brutal-yellow border-4 border-brutal-black px-6 md:px-8 font-black uppercase text-lg md:text-xl hover:translate-x-1 hover:translate-y-1 hover:shadow-none active:translate-x-0 active:translate-y-0 active:shadow-hard shadow-hard transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <span className="hidden md:inline">{isSending ? 'SENDING...' : 'SEND'}</span>
                   <span className="md:hidden">{isSending ? '...' : '>'}</span>
@@ -1233,15 +1250,16 @@ const ChatInterface: React.FC = () => {
           </>
         ) : (
           /* Placeholder State (Desktop only) */
-          <div className="hidden md:flex flex-col items-center justify-center h-full text-center p-8 bg-brutal-white">
-            <div className="w-32 h-32 bg-brutal-yellow border-8 border-brutal-black mb-6 shadow-hard-lg flex items-center justify-center">
+          <div className="hidden md:flex flex-col items-center justify-center h-full text-center p-8 bg-brutal-white animate-fade-in">
+            <div className="w-32 h-32 bg-brutal-yellow border-8 border-brutal-black mb-6 shadow-hard-lg flex items-center justify-center animate-float">
               <span className="text-6xl font-black">👻</span>
             </div>
-            <h2 className="text-5xl font-black uppercase mb-4 text-brutal-black">AWAITING<br/>SIGNAL</h2>
-            <p className="font-bold max-w-md mb-6 text-brutal-black text-lg">Select a secure channel from the left to begin ZK-encrypted transmission.</p>
+            <h2 className="text-5xl font-black uppercase mb-4 text-brutal-black animate-slide-up" style={{ animationDelay: '0.1s', animationFillMode: 'both' }}>AWAITING<br/>SIGNAL</h2>
+            <p className="font-bold max-w-md mb-6 text-brutal-black text-lg animate-slide-up" style={{ animationDelay: '0.2s', animationFillMode: 'both' }}>Select a secure channel from the left to begin ZK-encrypted transmission.</p>
             <button
               onClick={() => setShowNewChatModal(true)}
-              className="bg-brutal-yellow border-4 border-brutal-black px-8 py-4 font-black uppercase text-xl hover:translate-x-1 hover:translate-y-1 hover:shadow-none shadow-hard transition-all"
+              className="bg-brutal-yellow border-4 border-brutal-black px-8 py-4 font-black uppercase text-xl hover:translate-x-1 hover:translate-y-1 hover:shadow-none active:translate-x-0 active:translate-y-0 shadow-hard transition-all duration-150 animate-slide-up"
+              style={{ animationDelay: '0.3s', animationFillMode: 'both' }}
             >
               CREATE NEW CHAT
             </button>
@@ -1252,17 +1270,18 @@ const ChatInterface: React.FC = () => {
       {/* Profile Modal */}
       {showProfileModal && (
         <div 
-          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+          className="modal-backdrop fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
           onClick={() => setShowProfileModal(false)}
         >
           <div 
-            className="bg-white border-4 border-brutal-black p-6 max-w-md w-full mx-4"
+            className="modal-content bg-white border-4 border-brutal-black p-6 max-w-md w-full mx-4 shadow-hard-lg"
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 className="text-2xl font-black uppercase mb-4">CREATE PROFILE</h2>
+            <h2 className="text-2xl font-black uppercase mb-4">PROFILE</h2>
+            <p className="text-xs text-gray-600 mb-4">Name and bio are saved on-chain and locally. You can update them anytime.</p>
             <div className="space-y-4">
               <div>
-                <label className="block text-xs font-bold uppercase mb-2">NAME *</label>
+                <label className="block text-xs font-bold uppercase mb-2">NAME</label>
                 <input
                   type="text"
                   value={profileName}
@@ -1272,7 +1291,7 @@ const ChatInterface: React.FC = () => {
                 />
               </div>
               <div>
-                <label className="block text-xs font-bold uppercase mb-2">BIO *</label>
+                <label className="block text-xs font-bold uppercase mb-2">BIO</label>
                 <textarea
                   value={profileBio}
                   onChange={(e) => setProfileBio(e.target.value)}
@@ -1284,42 +1303,45 @@ const ChatInterface: React.FC = () => {
               <div className="flex gap-2">
                 <button
                   onClick={async () => {
-                    if (!profileName.trim() || !profileBio.trim() || !publicKey) {
-                      alert('Please fill all fields');
+                    if (!publicKey) return;
+                    const name = profileName.trim();
+                    const bio = profileBio.trim();
+                    if (!name && !bio) {
+                      alert('Enter at least name or bio.');
                       return;
                     }
 
                     setIsSending(true);
-                    setTxStatus('Creating profile...');
+                    setTxStatus('Saving profile...');
 
                     try {
-                      const nameField = stringToField(profileName);
-                      const bioField = stringToField(profileBio);
+                      const nameField = stringToField(name || '');
+                      const bioField = stringToField(bio || '');
 
-                      setTxStatus('Creating profile...');
-                      const txId = await createProfileContract(
+                      const txId = await updateProfileContract(
                         nameField,
                         bioField,
                         { maxRetries: 3 }
                       );
 
                       if (txId) {
-                        setTxStatus(`Profile created! TX: ${txId.slice(0, 8)}...`);
+                        try {
+                          localStorage.setItem(`ghost_profile_${publicKey}`, JSON.stringify({ name: name || '', bio: bio || '' }));
+                        } catch (e) {
+                          // ignore
+                        }
+                        setTxStatus(`Profile saved! TX: ${txId.slice(0, 8)}...`);
                         setTimeout(() => {
                           setShowProfileModal(false);
-                          setProfileName('');
-                          setProfileBio('');
                           setTxStatus('');
                         }, 2000);
                       }
                     } catch (error: any) {
-                      console.error("❌ Profile creation error:", error);
                       const errorMsg = error?.message || String(error);
-                      if (errorMsg.includes("Permission") || errorMsg.includes("NOT_GRANTED") || 
-                          errorMsg.includes("rejected") || errorMsg.includes("cancelled")) {
+                      if (errorMsg.includes("Permission") || errorMsg.includes("NOT_GRANTED") || errorMsg.includes("rejected") || errorMsg.includes("cancelled")) {
                         setTxStatus("Transaction rejected");
                       } else if (errorMsg.includes("not indexed") || errorMsg.includes("program not found")) {
-                        setTxStatus("Program not indexed yet. Please wait 5-10 minutes and try again.");
+                        setTxStatus("Program not indexed yet. Wait 5-10 min and try again.");
                       } else {
                         setTxStatus("Error: " + errorMsg.slice(0, 50));
                       }
@@ -1327,16 +1349,14 @@ const ChatInterface: React.FC = () => {
                       setIsSending(false);
                     }
                   }}
-                  disabled={!profileName.trim() || !profileBio.trim() || isSending || !publicKey}
+                  disabled={(!profileName.trim() && !profileBio.trim()) || isSending || !publicKey}
                   className="flex-1 bg-brutal-yellow border-4 border-brutal-black px-4 py-3 font-black uppercase hover:translate-x-1 hover:translate-y-1 hover:shadow-none shadow-hard transition-all disabled:opacity-50"
                 >
-                  {isSending ? 'CREATING...' : 'CREATE'}
+                  {isSending ? 'SAVING...' : 'SAVE PROFILE'}
                 </button>
                 <button
                   onClick={() => {
                     setShowProfileModal(false);
-                    setProfileName('');
-                    setProfileBio('');
                     setTxStatus('');
                   }}
                   className="bg-white border-4 border-brutal-black px-4 py-3 font-black uppercase hover:bg-gray-100"
@@ -1357,11 +1377,11 @@ const ChatInterface: React.FC = () => {
       {/* Delete Confirmation Modal */}
       {showDeleteConfirm && (
         <div 
-          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+          className="modal-backdrop fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
           onClick={() => setShowDeleteConfirm(null)}
         >
           <div 
-            className="bg-white border-4 border-brutal-black p-6 max-w-md w-full mx-4"
+            className="modal-content bg-white border-4 border-brutal-black p-6 max-w-md w-full mx-4 shadow-hard-lg"
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="text-2xl font-black uppercase mb-4">DELETE CHAT</h2>
@@ -1391,11 +1411,11 @@ const ChatInterface: React.FC = () => {
       {/* New Chat Modal */}
       {showNewChatModal && (
         <div 
-          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+          className="modal-backdrop fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
           onClick={() => setShowNewChatModal(false)}
         >
           <div 
-            className="bg-white border-4 border-brutal-black p-6 max-w-md w-full mx-4"
+            className="modal-content bg-white border-4 border-brutal-black p-6 max-w-md w-full mx-4 shadow-hard-lg"
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="text-2xl font-black uppercase mb-4">NEW CHAT</h2>
@@ -1447,11 +1467,11 @@ const ChatInterface: React.FC = () => {
       {/* Wallet Required Modal */}
       {showWalletRequiredModal && (
         <div 
-          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+          className="modal-backdrop fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
           onClick={() => setShowWalletRequiredModal(false)}
         >
           <div 
-            className="bg-white border-4 border-brutal-black p-6 max-w-md w-full mx-4 shadow-hard-lg"
+            className="modal-content bg-white border-4 border-brutal-black p-6 max-w-md w-full mx-4 shadow-hard-lg"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="text-center mb-6">
